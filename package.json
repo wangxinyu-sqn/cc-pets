@@ -1,0 +1,71 @@
+{
+  "name": "cc-pets",
+  "version": "2.0.0",
+  "description": "A native macOS desktop pet for Codex CLI and Claude Code",
+  "author": {
+    "name": "Sunnyshiny",
+    "url": "https://github.com/Sunnyshinnny776"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sunnyshinnny776/cc-pets.git"
+  },
+  "homepage": "https://github.com/Sunnyshinnny776/cc-pets",
+  "bugs": {
+    "url": "https://github.com/Sunnyshinnny776/cc-pets/issues"
+  },
+  "keywords": [
+    "codex",
+    "claude-code",
+    "desktop-pet",
+    "macos",
+    "appkit"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ],
+  "files": [
+    "bin",
+    "scripts",
+    "Resources/Info.plist",
+    "Resources/AppIcon.icns",
+    "Resources/phrases.default.txt",
+    "Sources/CCPets",
+    "README.md",
+    "README.zh-CN.md",
+    "PROVIDER_PROTOCOL.md",
+    "PROVIDER_PROTOCOL.zh-CN.md",
+    "CHANGELOG.md",
+    "CHANGELOG.zh-CN.md",
+    "CONTRIBUTING.md",
+    "CONTRIBUTING.zh-CN.md",
+    "SECURITY.md",
+    "SECURITY.zh-CN.md",
+    "THIRD_PARTY_NOTICES.md",
+    "THIRD_PARTY_NOTICES.zh-CN.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "cc-pets": "bin/cc-pets",
+    "codex-with-pet": "bin/codex-with-pet",
+    "claude-with-pet": "bin/claude-with-pet"
+  },
+  "scripts": {
+    "build": "./scripts/build.sh",
+    "test": "./tests/test.sh",
+    "version": "npm test",
+    "postinstall": "./scripts/install-shell-integration.sh",
+    "prepack": "npm test"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

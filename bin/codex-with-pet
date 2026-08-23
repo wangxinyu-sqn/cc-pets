@@ -1,0 +1,52 @@
+#!/bin/zsh
+set -eu
+
+SCRIPT_DIR="${0:A:h}"
+PROJECT_DIR="${SCRIPT_DIR:h}"
+PET_BIN="${PROJECT_DIR}/.build/release/cc-pets"
+BUILD_APP="${PROJECT_DIR}/.build/release/CC Pets.app"
+INSTALLED_APP="${CC_PETS_APPLICATIONS_DIR:-${HOME}/Applications}/CC Pets.app"
+REAL_CODEX="${CODEX_REAL_BIN:-}"
+SELF="${0:A}"
+SHIM_DIR="${CC_PETS_SHIM_DIR:-${HOME}/.cc-pets/shims}"
+CLIENT_DIR="${${TMPDIR:-/tmp/}%/}/cc-pets-$(id -u)-clients"
+CLIENT_FILE="${CLIENT_DIR}/$$"
+
+# 见 claude-with-pet 同处注释：PATH 里的 codex 是指向本脚本的 shim，
+# whence -p 会先命中它，直接 exec 就是无限递归。
+if [[ -z "${REAL_CODEX}" ]]; then
+  typeset -a CANDIDATES
+  CANDIDATES=(${(f)"$(whence -ap codex 2>/dev/null || true)"})
+  for candidate in "${CANDIDATES[@]}"; do
+    [[ -n "${candidate}" && -x "${candidate}" ]] || continue
+    [[ "${candidate:A}" == "${SELF}" ]] && continue
+    [[ "${candidate:A:h}" == "${SHIM_DIR:A}" ]] && continue
+    REAL_CODEX="${candidate}"
+    break
+  done
+fi
+if [[ -z "${REAL_CODEX}" || ! -x "${REAL_CODEX}" ]]; then
+  print -u2 "未找到可执行的 Codex CLI。请先安装 codex，或通过 CODEX_REAL_BIN 指定真实路径。"
+  exit 127
+fi
+
+if [[ ! -x "${PET_BIN}" || ! -d "${BUILD_APP}" ]]; then
+  "${PROJECT_DIR}/scripts/build.sh" >/dev/null
+fi
+
+PET_APP="${BUILD_APP}"
+if [[ -d "${INSTALLED_APP}" ]]; then
+  PET_APP="${INSTALLED_APP}"
+fi
+
+mkdir -p "${CLIENT_DIR}"
+# 写入 provider 名，桌宠据此判断“这一家的客户端是否还活着”。只 touch 空文件的话，
+# Codex 全部退出后桌宠分不清剩下的客户端是谁，状态气泡会一直停在最后一条事件上。
+print -r -- 'Codex' > "${CLIENT_FILE}"
+
+print -rn -- '{"schemaVersion":1,"provider":"Codex","state":"starting"}' | \
+  "${PET_BIN}" --provider-event >/dev/null 2>&1 || true
+# 桌宠是常驻进程，会一直带着这里的环境。CLAUDE_CONFIG_DIR 是会话级的（claude-nw
+# 之类的别名会设它），泄漏过去会让桌宠永久只统计"第一个拉起它的账号"。
+env -u CLAUDE_CONFIG_DIR open -g "${PET_APP}" --args --managed
+exec "${REAL_CODEX}" "$@"

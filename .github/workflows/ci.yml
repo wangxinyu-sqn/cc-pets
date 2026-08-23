@@ -1,0 +1,31 @@
+name: CI
+
+# 这个项目必须在 macOS 上构建（clang + Cocoa/QuartzCore/UserNotifications），
+# 所以只有提供 macOS runner 的 CI 才能真正跑起来。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 编译告警升级为错误并跑完整测试
+        # CC_PETS_STRICT=1 让 build.sh 加上 -Werror。本地开发只警告，CI 必须零告警。
+        run: CC_PETS_STRICT=1 npm test
+
+      - name: 失败时收集构建产物信息
+        if: failure()
+        run: |
+          echo "--- .build/release ---"
+          ls -la .build/release || true
+          echo "--- 残留的测试临时目录 ---"
+          ls -d /tmp/cc-pets-* 2>/dev/null || true

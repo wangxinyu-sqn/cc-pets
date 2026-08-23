@@ -1,0 +1,61 @@
+#!/bin/zsh
+set -eu
+
+SCRIPT_DIR="${0:A:h}"
+PROJECT_DIR="${SCRIPT_DIR:h}"
+PET_BIN="${PROJECT_DIR}/.build/release/cc-pets"
+BUILD_APP="${PROJECT_DIR}/.build/release/CC Pets.app"
+INSTALLED_APP="${CC_PETS_APPLICATIONS_DIR:-${HOME}/Applications}/CC Pets.app"
+
+if [[ "${1:-}" == "install" ]]; then
+  exec "${PROJECT_DIR}/scripts/install-shell-integration.sh"
+fi
+
+if [[ "${1:-}" == "pet" ]]; then
+  shift
+  exec node "${PROJECT_DIR}/scripts/pet-store.mjs" "$@"
+fi
+
+if [[ "${1:-}" == "uninstall" ]]; then
+  exec "${PROJECT_DIR}/scripts/uninstall-shell-integration.sh"
+fi
+
+if [[ "${1:-}" == "uninstall-app" ]]; then
+  exec "${PROJECT_DIR}/scripts/uninstall-app.sh"
+fi
+
+if [[ "${1:-}" == "build" ]]; then
+  exec "${PROJECT_DIR}/scripts/build.sh"
+fi
+
+if [[ "${1:-}" == "clean" ]]; then
+  shift
+  exec "${PET_BIN}" --clean "$@"
+fi
+
+if [[ ! -x "${PET_BIN}" || ! -d "${BUILD_APP}" ]]; then
+  "${PROJECT_DIR}/scripts/build.sh" >/dev/null
+fi
+
+if [[ $# -eq 0 ]]; then
+  PET_APP="${BUILD_APP}"
+  if [[ -d "${INSTALLED_APP}" ]]; then
+    PET_APP="${INSTALLED_APP}"
+  fi
+  # 桌宠是常驻进程，会一直带着这里的环境。CLAUDE_CONFIG_DIR 是会话级的（claude-nw
+  # 之类的别名会设它），泄漏过去会让桌宠永久只统计"第一个拉起它的账号"。
+  env -u CLAUDE_CONFIG_DIR open -g "${PET_APP}"
+  exit 0
+fi
+
+if [[ "${1:-}" == "--foreground" ]]; then
+  shift
+  exec "${PET_BIN}" "$@"
+fi
+
+if [[ "${1:-}" == "provider-event" ]]; then
+  shift
+  exec "${PET_BIN}" --provider-event "$@"
+fi
+
+exec "${PET_BIN}" "$@"

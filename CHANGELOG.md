@@ -1,0 +1,48 @@
+# Changelog
+
+English | [简体中文](./CHANGELOG.zh-CN.md)
+
+This project follows Semantic Versioning. `package.json` is the single source of
+truth for the version.
+
+## [2.0.0] - 2026-08-23
+
+First open-source release.
+
+### Pet and interaction
+
+- Native macOS AppKit desktop pet with no Electron runtime and no dependency on the Codex or Claude desktop apps.
+- Idle breathing, random movements, drag lag and landing bounce, plus hover and click feedback for the head, pocket, feet, and both body sides.
+- The right-click menu can switch pets, refresh usage, toggle quota history and system notifications, check for updates, or exit.
+- Supports built-in assets and external assets under `~/.cc-pets/pets/`, with `spriteVersionNumber` v1 and v2 grids.
+
+### Quota and usage
+
+- Reads five-hour quota, weekly quota, and reset times from local `~/.codex/sessions` data and Claude Code's official status line input.
+- Hovering over the pocket opens a panel with separate Codex and Claude cards for remaining percentage, local tokens, and seven-day trends.
+- Optionally records seven days of local quota history; disabled by default and stored only on the local machine.
+- Supports Subscription quota and API usage display modes.
+
+### Agent status
+
+- Codex Hooks and Claude Code Hooks drive animations for thinking, tool calls, approvals, subagents, completion, and failure.
+- Displays a redacted glass status card beside the pet, which can be collapsed and shows the active CLI session count.
+- macOS notifications can be enabled separately for completion, failure, and approval requests.
+- Third-party CLI agents can integrate through the unified Provider event protocol; see [`PROVIDER_PROTOCOL.md`](./PROVIDER_PROTOCOL.md).
+
+### Speech
+
+- All pet speech comes from `~/.cc-pets/speech.txt`, can be edited in the built-in editor, and supports live data placeholders.
+- Per-pet speech can be stored at `~/.cc-pets/speech/<pet-name>.txt` and replaces global speech by section.
+- Includes four speech-frequency levels and stays silent while an agent is working.
+
+### Installation and integration
+
+- `npm install -g cc-pets` builds the native app, installs both hook integrations and shell integration, and installs `~/Applications/CC Pets.app`.
+- Symlinks under `~/.cc-pets/shims` intercept `codex` and `claude`, including casing variants, to start the pet.
+- `cc-pets install`, `uninstall`, and `uninstall-app` provide repeatable initialization and cleanup flows.
+
+### Privacy
+
+- Uploads no conversations, quotas, credentials, or usage statistics and contains no telemetry.
+- Status cards and notifications show only the provider, state category, and redacted tool category.

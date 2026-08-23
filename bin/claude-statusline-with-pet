@@ -1,0 +1,19 @@
+#!/bin/zsh
+set -u
+
+SCRIPT_DIR="${0:A:h}"
+PROJECT_DIR="${SCRIPT_DIR:h}"
+PET_BIN="${PROJECT_DIR}/.build/release/cc-pets"
+ORIGINAL_COMMAND_BASE64="${1:-}"
+INPUT="$(cat)"
+
+if [[ -x "${PET_BIN}" ]]; then
+  print -rn -- "${INPUT}" | "${PET_BIN}" --claude-usage >/dev/null 2>&1 || true
+fi
+
+if [[ -n "${ORIGINAL_COMMAND_BASE64}" ]]; then
+  ORIGINAL_COMMAND="$(print -rn -- "${ORIGINAL_COMMAND_BASE64}" | /usr/bin/base64 -D 2>/dev/null)"
+  if [[ -n "${ORIGINAL_COMMAND}" ]]; then
+    print -rn -- "${INPUT}" | /bin/zsh -c "${ORIGINAL_COMMAND}"
+  fi
+fi

@@ -1,0 +1,53 @@
+#!/bin/zsh
+set -eu
+
+SCRIPT_DIR="${0:A:h}"
+PROJECT_DIR="${SCRIPT_DIR:h}"
+PET_BIN="${PROJECT_DIR}/.build/release/cc-pets"
+BUILD_APP="${PROJECT_DIR}/.build/release/CC Pets.app"
+INSTALLED_APP="${CC_PETS_APPLICATIONS_DIR:-${HOME}/Applications}/CC Pets.app"
+REAL_CLAUDE="${CLAUDE_REAL_BIN:-}"
+SELF="${0:A}"
+SHIM_DIR="${CC_PETS_SHIM_DIR:-${HOME}/.cc-pets/shims}"
+CLIENT_DIR="${${TMPDIR:-/tmp/}%/}/cc-pets-$(id -u)-clients"
+CLIENT_FILE="${CLIENT_DIR}/$$"
+
+# PATH 里有一个名为 claude 的 shim（软链到本脚本）。alias 区分大小写而 macOS 文件系统
+# 不区分，所以 Claude / CLAUDE 这些写法只有 shim 拦得住。代价是不能再用 whence -p：
+# 它拿回来的第一个 claude 就是 shim 自己，exec 下去就是无限递归。这里遍历全部候选，
+# 跳过解析后指向本脚本的、以及落在 shim 目录里的（复制而非软链安装时的兜底）。
+if [[ -z "${REAL_CLAUDE}" ]]; then
+  typeset -a CANDIDATES
+  CANDIDATES=(${(f)"$(whence -ap claude 2>/dev/null || true)"})
+  for candidate in "${CANDIDATES[@]}"; do
+    [[ -n "${candidate}" && -x "${candidate}" ]] || continue
+    [[ "${candidate:A}" == "${SELF}" ]] && continue
+    [[ "${candidate:A:h}" == "${SHIM_DIR:A}" ]] && continue
+    REAL_CLAUDE="${candidate}"
+    break
+  done
+fi
+if [[ -z "${REAL_CLAUDE}" || ! -x "${REAL_CLAUDE}" ]]; then
+  print -u2 "未找到可执行的 Claude Code CLI。请先安装 claude，或通过 CLAUDE_REAL_BIN 指定真实路径。"
+  exit 127
+fi
+
+if [[ ! -x "${PET_BIN}" || ! -d "${BUILD_APP}" ]]; then
+  "${PROJECT_DIR}/scripts/build.sh" >/dev/null
+fi
+
+PET_APP="${BUILD_APP}"
+if [[ -d "${INSTALLED_APP}" ]]; then
+  PET_APP="${INSTALLED_APP}"
+fi
+
+mkdir -p "${CLIENT_DIR}"
+# 写入 provider 名，桌宠据此判断“这一家的客户端是否还活着”。见 codex-with-pet 同处注释。
+print -r -- 'Claude' > "${CLIENT_FILE}"
+
+print -rn -- '{"schemaVersion":1,"provider":"Claude","state":"starting"}' | \
+  "${PET_BIN}" --provider-event >/dev/null 2>&1 || true
+# 桌宠是常驻进程，会一直带着这里的环境。CLAUDE_CONFIG_DIR 是会话级的（claude-nw
+# 之类的别名会设它），泄漏过去会让桌宠永久只统计"第一个拉起它的账号"。
+env -u CLAUDE_CONFIG_DIR open -g "${PET_APP}" --args --managed
+exec "${REAL_CLAUDE}" "$@"
