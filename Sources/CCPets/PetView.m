@@ -376,12 +376,17 @@ typedef NS_ENUM(NSInteger, PetMicroBehaviorKind) {
     CGFloat dy = (point.y - centerY) / (NSHeight(self.bounds) * 0.16);
     return dx * dx + dy * dy <= 1.0;
 }
-- (void)updateHoverForPoint:(NSPoint)point {
-    [self noteActivity];
+- (BOOL)updatePocketHoverForPoint:(NSPoint)point {
     BOOL overPocket = [self isPocketPoint:point];
     if (self.pocketHoverChanged) self.pocketHoverChanged(overPocket);
+    if (overPocket) [NSCursor.pointingHandCursor set];
+    else [NSCursor.arrowCursor set];
+    return overPocket;
+}
+- (void)updateHoverForPoint:(NSPoint)point {
+    [self noteActivity];
+    BOOL overPocket = [self updatePocketHoverForPoint:point];
     if (overPocket) {
-        [NSCursor.pointingHandCursor set];
         [self playRow:5 throughFrame:7 oneShot:NO];
     } else if (point.y >= NSHeight(self.bounds) * 0.58) {
         [NSCursor.pointingHandCursor set];
@@ -400,14 +405,16 @@ typedef NS_ENUM(NSInteger, PetMicroBehaviorKind) {
         [self playRow:0 throughFrame:5 oneShot:NO];
     }
 }
+- (void)mouseEntered:(NSEvent *)event {
+    [self mouseMoved:event];
+}
 - (void)mouseMoved:(NSEvent *)event {
-    if (self.draggingPet || self.oneShot) return;
+    if (self.draggingPet) return;
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    if (self.agentActive) {
-        BOOL overPocket = [self isPocketPoint:point];
-        if (self.pocketHoverChanged) self.pocketHoverChanged(overPocket);
-        if (overPocket) [NSCursor.pointingHandCursor set];
-        else [NSCursor.arrowCursor set];
+    // 一次性动作只锁定动画，不应锁住面板热区。否则鼠标在动作期间进入后停住，
+    // oneShot 结束时不会再收到 mouseMoved，额度面板就一直没有机会展示。
+    if (self.oneShot || self.agentActive) {
+        [self updatePocketHoverForPoint:point];
         return;
     }
     [self updateHoverForPoint:point];
@@ -416,7 +423,7 @@ typedef NS_ENUM(NSInteger, PetMicroBehaviorKind) {
     if (self.draggingPet) return;
     if (self.pocketHoverChanged) self.pocketHoverChanged(NO);
     [NSCursor.arrowCursor set];
-    if (self.agentActive) return;
+    if (self.agentActive || self.oneShot) return;
     [self playRow:0 throughFrame:5 oneShot:NO];
 }
 - (void)nextFrame:(NSTimer *)timer {
