@@ -343,10 +343,31 @@ static NSDictionary *UsageFromCodexLine(NSData *lineData) {
     };
 }
 
-// 耗尽事件不早于当前额度快照时，把标记贴到 usage 上，供面板把剩余额度显示成 0。
+// 受限事件没有窗口归属，只能给它一个有效期：快照里最短窗口的 resets_at 一过，那个窗口
+// 必然已经重置，再挂着"额度受限"就是在声称一件我们已经不知道的事——而受限期间官方常年
+// 只回 primary/secondary 全 null（见 UsageFromCodexLine），等"更新的快照"来推翻可能等不到。
+// 真正用尽的是 7 天窗口时，5 小时窗口重置后仍会被拒，届时会写下新的 usage_limit_exceeded，
+// 标记自己会贴回来。
+static BOOL ExhaustionStillHolds(NSDictionary *usage, NSTimeInterval exhaustedAt) {
+    if (![usage isKindOfClass:NSDictionary.class] || exhaustedAt <= 0) return NO;
+    if (exhaustedAt < [usage[@"sampledAt"] doubleValue]) return NO;
+    NSTimeInterval earliestReset = 0;
+    for (NSString *key in @[@"fiveHour", @"week"]) {
+        NSDictionary *quota = [usage[key] isKindOfClass:NSDictionary.class] ? usage[key] : nil;
+        NSNumber *reset = [quota[@"resets_at"] isKindOfClass:NSNumber.class] ? quota[@"resets_at"] : nil;
+        double value = reset.doubleValue;
+        if (value <= 0) continue;
+        if (earliestReset == 0 || value < earliestReset) earliestReset = value;
+    }
+    if (earliestReset > 0 && NSDate.date.timeIntervalSince1970 > earliestReset) return NO;
+    return YES;
+}
+
+// 受限事件仍然成立时，把标记贴到 usage 上。事件本身没有窗口归属，面板只能提示"额度受限"
+// 并把已有百分比标为快照，不能据此把 5 小时和 7 天窗口都判成 0。
 static NSDictionary *UsageByMarkingExhaustion(NSDictionary *usage, NSTimeInterval exhaustedAt) {
-    if (![usage isKindOfClass:NSDictionary.class] || exhaustedAt <= 0) return usage;
-    if (exhaustedAt < [usage[@"sampledAt"] doubleValue]) return usage;
+    if (![usage isKindOfClass:NSDictionary.class]) return usage;
+    if (!ExhaustionStillHolds(usage, exhaustedAt)) return usage;
     NSMutableDictionary *result = [usage mutableCopy];
     result[@"exhaustedAt"] = @(exhaustedAt);
     return result;
@@ -1293,7 +1314,7 @@ static const NSTimeInterval TokenCacheSaveInterval = 60.0;
     if (reusable) {
         NSMutableDictionary *result = [usage mutableCopy];
         result[@"tokenUsage"] = self.tokenUsage;
-        return UsageByMarkingExhaustion(result, self.exhaustedAt);
+        return [self usageByApplyingExhaustion:result];
     }
     BOOL archiveChanged = NO;
     // 正在增量读取的会话永远排在钉住列表最前面：它是最不该被漏掉的那一个，而漏掉它
@@ -1311,11 +1332,23 @@ static const NSTimeInterval TokenCacheSaveInterval = 60.0;
     self.tokenWindowIdentity = identity;
     self.tokenComputedAt = now;
     self.forcesTokenAggregation = NO;
-    return UsageByMarkingExhaustion(result, self.exhaustedAt);
+    return [self usageByApplyingExhaustion:result];
 }
-// 耗尽事件只往前走：额度恢复由"更新的额度快照"表达（见 UsageByMarkingExhaustion）。
+// 耗尽事件只往前走：额度恢复由"更新的额度快照"或窗口重置表达（见 ExhaustionStillHolds）。
 - (void)noteExhaustion:(NSNumber *)timestamp {
     if (timestamp.doubleValue > self.exhaustedAt) self.exhaustedAt = timestamp.doubleValue;
+}
+// 标记失效时把记下的时刻一并清掉：留着它只会在下一轮再比一次同样的大小，而窗口一旦重置，
+// 这个时刻就永远不该再让任何快照被判成受限了。
+- (NSDictionary *)usageByApplyingExhaustion:(NSDictionary *)usage {
+    if (![usage isKindOfClass:NSDictionary.class]) return usage;
+    if (!ExhaustionStillHolds(usage, self.exhaustedAt)) {
+        // 快照只会向前走（NewerUsageSnapshot），所以失效一次就是永久失效；真再撞上限流，
+        // noteExhaustion: 会记下新的时刻。
+        self.exhaustedAt = 0;
+        return usage;
+    }
+    return UsageByMarkingExhaustion(usage, self.exhaustedAt);
 }
 // 最近被写过的会话，最新的排在前面。并发会话不会太多，留 8 个足够覆盖一批 FSEvents；
 // 更早的那些反正也会被目录扫描按 mtime 捞回来，钉住它们只是白读文件。
@@ -1495,7 +1528,7 @@ static const NSUInteger MaximumPinnedSessions = 8;
     if (!chosen) chosen = currentSession;
     // 一个候选都没选中就不会再走到 usageWithTokenTotals，刚记下的耗尽标记得在这里贴上。
     if (!chosen) {
-        self.usage = UsageByMarkingExhaustion(self.usage, self.exhaustedAt);
+        self.usage = [self usageByApplyingExhaustion:self.usage];
         return self.usage;
     }
     if (![chosen.path isEqualToString:self.sessionURL.path]) [self selectSessionURL:chosen];
