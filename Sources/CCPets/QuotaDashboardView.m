@@ -551,8 +551,9 @@ NSImage *OfficialAppIcon(NSString *bundleIdentifier, NSString *resourceName) {
         ? self.codexShowsAPIUsage : self.claudeShowsAPIUsage;
     NSNumber *fiveUsed = [self usedForQuota:five usedKey:usedKey];
     NSNumber *weekUsed = [self usedForQuota:week usedKey:usedKey];
-    // 额度被拒之后官方不再报告任何窗口，留在手里的百分比既过期、指向的结论又正好相反
-    // （账号是共享的，别人用完时本机的数字纹丝不动）。这时按 0 显示，并把状态说清楚。
+    // usage_limit_exceeded 只能说明某次请求被额度限制，不能说明耗尽的是 5 小时还是
+    // 7 天窗口；切到 credits 后请求还能继续成功，但 rate_limits 可能一直为空。因此把它
+    // 作为独立的“额度受限”状态，不再拿一个无窗口归属的事件覆盖两个官方百分比。
     BOOL exhausted = [usage[@"exhaustedAt"] isKindOfClass:NSNumber.class];
     BOOL hasData = apiMode ? (monthTokens != nil)
         : (fiveUsed || weekUsed || fiveTokens || weekTokens || exhausted);
@@ -590,9 +591,9 @@ NSImage *OfficialAppIcon(NSString *bundleIdentifier, NSString *resourceName) {
     }
     [name drawInRect:NSMakeRect(NSMinX(card) + 94, NSMinY(card) + 84, 88, 30)
         withAttributes:[self textAttributesWithSize:22 color:primary weight:NSFontWeightBold]];
-    // 四态：额度被拒 → 额度已用尽（压过在线，这是此刻唯一要紧的信息）；没有任何额度
-    // 数据 → 等待数据；有数据但客户端已退出 → 离线；两者都有 → 在线。
-    NSString *statusText = (!apiMode && exhausted) ? @"额度已用尽"
+    // 四态：额度被拒 → 额度受限（百分比仍是上次官方快照）；没有任何额度数据 → 等待数据；
+    // 有数据但客户端已退出 → 离线；两者都有 → 在线。
+    NSString *statusText = (!apiMode && exhausted) ? @"额度受限"
         : (!hasData ? @"等待数据" : (online ? @"● 在线" : @"离线"));
     NSColor *statusColor = (!apiMode && exhausted) ? NSColor.systemOrangeColor
         : (online && hasData ? NSColor.systemGreenColor : secondary);
@@ -718,9 +719,8 @@ NSImage *OfficialAppIcon(NSString *bundleIdentifier, NSString *resourceName) {
         [window[@"title"] drawInRect:NSMakeRect(x, NSMinY(card) + 114, 130, 20)
             withAttributes:[self textAttributesWithSize:13 color:secondary weight:NSFontWeightRegular]];
         NSNumber *used = [window[@"used"] isKindOfClass:NSNumber.class] ? window[@"used"] : nil;
-        double remaining = exhausted ? 0 : (used ? 100.0 - used.doubleValue : 0);
-        NSString *official = (used || exhausted)
-            ? [NSString stringWithFormat:@"%.0f%%", remaining] : @"--";
+        double remaining = used ? 100.0 - used.doubleValue : 0;
+        NSString *official = used ? [NSString stringWithFormat:@"%.0f%%", remaining] : @"--";
         // 百分比是"剩余"、Token 是"已用"，方向相反。后缀直接贴在数字右侧、
         // 前缀写进 Token 行，否则两个数字并排看会被当成同一口径。
         NSDictionary *valueAttributes = [self textAttributesWithSize:25
@@ -729,7 +729,9 @@ NSImage *OfficialAppIcon(NSString *bundleIdentifier, NSString *resourceName) {
         CGFloat valueWidth = ceil([official sizeWithAttributes:valueAttributes].width);
         [official drawInRect:NSMakeRect(x, NSMinY(card) + 74, valueWidth + 4, 34)
             withAttributes:valueAttributes];
-        [@"剩余" drawInRect:NSMakeRect(x + valueWidth + 7, NSMinY(card) + 78, 60, 20)
+        // 没有数字可标时不给口径标签："-- 快照"读起来像是快照本身坏了。
+        NSString *valueLabel = (used && exhausted) ? @"快照" : @"剩余";
+        [valueLabel drawInRect:NSMakeRect(x + valueWidth + 7, NSMinY(card) + 78, 60, 20)
             withAttributes:[self textAttributesWithSize:12 color:secondary weight:NSFontWeightRegular]];
         // 官方窗口拿不到时（账号没有这个窗口、或响应里没带），Token 走的是本机滚动窗口。
         // 说清楚这一行的口径，比留一个 `--` 让人以为是渲染坏了要好。
@@ -750,9 +752,12 @@ NSImage *OfficialAppIcon(NSString *bundleIdentifier, NSString *resourceName) {
         withAttributes:[self textAttributesWithSize:13 color:secondary weight:NSFontWeightRegular]];
     NSArray<NSDictionary *> *history = [name isEqualToString:@"Codex"]
         ? self.codexHistory : self.claudeHistory;
-    NSNumber *currentUsed = exhausted ? @100 : weekUsed;
+    NSNumber *currentUsed = weekUsed;
     NSArray<NSDictionary *> *points = [self curvePointsFromHistory:history currentUsed:currentUsed];
-    NSDictionary *pace = [self paceStatusForQuota:week currentUsed:currentUsed color:color];
+    NSDictionary *pace = exhausted
+        ? @{ @"label": @"待刷新", @"tip": @"等待新的官方额度快照",
+             @"color": NSColor.systemOrangeColor }
+        : [self paceStatusForQuota:week currentUsed:currentUsed color:color];
     NSColor *paceColor = pace[@"color"];
     NSDictionary *pillAttributes = [self textAttributesWithSize:11 color:paceColor
         weight:NSFontWeightSemibold];

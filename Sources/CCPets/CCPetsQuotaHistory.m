@@ -23,11 +23,11 @@ NSDictionary *QuotaHistoryDocument(void) {
 static NSDictionary *HistoryProviderSample(NSDictionary *usage, NSString *usedKey) {
     NSNumber *fiveHour = RemainingValue(usage, @"fiveHour", usedKey);
     NSNumber *week = RemainingValue(usage, @"week", usedKey);
-    // 额度被拒之后官方不再报窗口，留在手里的百分比是过期值，照抄进历史会画出一条
-    // "一直有余额"的假曲线。
+    // usage_limit_exceeded 没有窗口归属，既不能证明两个窗口都归零，也不能证明上次快照
+    // 仍代表当前额度。受限期间不写历史点，等任意会话拿到更新的官方快照后再继续记录。
     if ([usage[@"exhaustedAt"] isKindOfClass:NSNumber.class]) {
-        if (fiveHour) fiveHour = @0;
-        if (week) week = @0;
+        fiveHour = nil;
+        week = nil;
     }
     NSMutableDictionary *sample = [NSMutableDictionary dictionary];
     if (fiveHour) sample[@"fiveHourRemaining"] = fiveHour;
