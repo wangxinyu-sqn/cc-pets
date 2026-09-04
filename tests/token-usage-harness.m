@@ -296,6 +296,35 @@ int main(void) {
         }
         puts("Codex 额度耗尽标记与恢复测试通过");
 
+        // 受限之后官方常年只回全 null 的 rate_limits，"等一份更新的快照"可能永远等不到。
+        // 快照里最短窗口的 resets_at 一过，那个窗口必然已经重置，标记必须自己失效——
+        // 否则一次限流会让卡片永久挂着"额度受限"，趋势曲线也跟着永久停更。
+        NSString *staleHome = [home stringByAppendingPathComponent:@"exhausted-stale"];
+        NSString *staleDirectory = [staleHome stringByAppendingPathComponent:
+            [NSString stringWithFormat:@"sessions/%@", [dayFormatter stringFromDate:NSDate.date]]];
+        [NSFileManager.defaultManager createDirectoryAtPath:staleDirectory
+            withIntermediateDirectories:YES attributes:nil error:nil];
+        NSMutableData *staleLines = [NSMutableData data];
+        // 快照的 5 小时窗口在 60 秒前就该重置了，之后再撞上限流也只说明"那一刻被拒"。
+        [staleLines appendData:TokenEvent(now - 3000, 60, 10, 30, YES, now - 60, now + 3600, 1)];
+        [staleLines appendData:NullLimitsEvent(now - 100)];
+        [staleLines appendData:UsageLimitErrorEvent(now - 90)];
+        [staleLines writeToFile:[staleDirectory stringByAppendingPathComponent:@"rollout.jsonl"]
+            atomically:YES];
+        setenv("CC_PETS_CODEX_HOME", staleHome.fileSystemRepresentation, 1);
+        NSDictionary *stale = LatestUsage();
+        setenv("CC_PETS_CODEX_HOME", home.fileSystemRepresentation, 1);
+        if (stale[@"exhaustedAt"]) {
+            NSLog(@"窗口重置时刻已过时不应再判为额度受限: %@", stale);
+            return EXIT_FAILURE;
+        }
+        // 失效的只是受限标记，官方百分比仍是上一份快照，不能被一起清掉。
+        if ([stale[@"week"][@"used_percent"] doubleValue] != 34) {
+            NSLog(@"受限标记失效不应带走官方百分比: %@", stale);
+            return EXIT_FAILURE;
+        }
+        puts("Codex 受限标记过期失效测试通过");
+
         // Token 聚合按窗口节流：额度百分比要实时跟进，Token 沿用缓存；
         // 全量刷新必须绕过节流立即重算。
         CodexUsageReader *reader = [CodexUsageReader new];
