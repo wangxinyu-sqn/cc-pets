@@ -5,6 +5,21 @@ English | [简体中文](./CHANGELOG.zh-CN.md)
 This project follows Semantic Versioning. `package.json` is the single source of
 truth for the version.
 
+## [2.0.1] - 2026-09-07
+
+Bug fixes for quota display and panel stability.
+
+### Quota and usage
+
+- Read live Codex quota windows from the Codex App Server and overlay them on locally aggregated token usage, with a persistent background connection that handles refresh, notifications, timeouts, and fallback.
+- Fix Codex quota not showing again after a quota reset: expired session quota windows are now discarded independently, and exhaustion state is preserved correctly across resets.
+- Show a pending refresh state when official quota data is not yet available.
+
+### Pet and interaction
+
+- Fix the panel occasionally failing to show.
+- Unify pet speech to first person: the pet now speaks as the agent instead of narrating it from the outside.
+
 ## [2.0.0] - 2026-08-23
 
 First open-source release.
