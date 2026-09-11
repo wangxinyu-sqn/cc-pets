@@ -593,11 +593,47 @@ MANUAL_REVIEW_EVENT_FILE="${MANUAL_REVIEW_STATE}/cc-pets-$(id -u)-agent-events.n
 assert_file_contains "${MANUAL_REVIEW_EVENT_FILE}" '"state":"approval"' "Codex 人工审批状态测试"
 print "Codex 自动审批与人工审批状态区分测试通过"
 grep -q 'pendingApprovalRecords' "${PET_SOURCES[@]}"
-grep -q 'latestPendingApprovalRecord' "${PET_SOURCES[@]}"
 grep -q 'session.length > 0' "${PET_SOURCES[@]}"
 grep -Fq 'record[@"session"]' "${PET_SOURCES[@]}"
-grep -q 'currentPriority != previousPriority' "${PET_SOURCES[@]}"
-print "跨 Agent 人工审批最高优先级配置测试通过"
+grep -Fq 'self.pendingApprovalRecords[approvalKey] = record' "${PET_SOURCES[@]}"
+print "跨 Agent 人工审批记录保存测试通过"
+
+# 等审批的会话是停住不动的，时间戳只会越来越旧：状态卡正文跟着最新事件走，会话
+# 列表按时间倒序，两边都会把最该处理的那条推到看不见的地方。角标和置顶各补一头。
+grep -q 'pendingApprovalSessionRecords' "${PET_SOURCES[@]}"
+grep -q 'refreshApprovalBadge' "${PET_SOURCES[@]}"
+grep -q 'CCPetsApprovalBadgeView' "${PET_SOURCES[@]}"
+if ! grep -q 'leftApproval ? NSOrderedAscending : NSOrderedDescending' "${PET_SOURCES[@]}"; then
+  print -u2 "会话列表没有把等审批的排到最前面，最该处理的那条会沉到列表底部"
+  exit 1
+fi
+# 角标不能吃掉圆形状态图标的点击，否则会话列表再也弹不出来。
+if ! grep -Fq -e 'hitTest:(NSPoint)point { return nil; }' "${PET_SOURCES[@]}"; then
+  print -u2 "待审批角标没有放行点击，会挡住状态图标"
+  exit 1
+fi
+# 60 秒没有新事件就清场的规则不该把未处理的审批一起收走。
+if ! grep -q 'if (self.hasAgentStatus && pending.count > 0)' "${PET_SOURCES[@]}"; then
+  print -u2 "气泡清场没有为未处理的审批留回落，审批会随沉默一起消失"
+  exit 1
+fi
+print "待审批角标与会话列表置顶测试通过"
+
+grep -q 'AgentApprovalStallInterval' "${PET_SOURCES[@]}"
+grep -q 'AgentThinkingStallInterval' "${PET_SOURCES[@]}"
+grep -q 'checkStalledAgentSessions' "${PET_SOURCES[@]}"
+grep -q 'NotificationStallKey' "${PET_SOURCES[@]}"
+# 去重键必须带上会话当时的时间戳：只用会话键的话，卡住提醒一辈子只会响一次。
+if ! grep -Fq '[NSString stringWithFormat:@"%@|%.0f", key, timestamp]' "${PET_SOURCES[@]}"; then
+  print -u2 "卡住提醒的去重键不含时间戳，会话恢复后再次卡住将不再提醒"
+  exit 1
+fi
+if ! grep -q 'intersectSet:valid' "${PET_SOURCES[@]}"; then
+  print -u2 "卡住提醒的去重集合没有回收失效键，会随会话数无限增长"
+  exit 1
+fi
+grep -q '响应超时' "${PET_SOURCES[@]}"
+print "Agent 卡住检测与提醒测试通过"
 
 print -n '{"hook_event_name":"PostToolUseFailure","tool_name":"Bash"}' | \
   CC_PETS_STATE_DIR="${HOOK_TMP}" "${PROJECT_DIR}/.build/release/cc-pets" --hook
@@ -1309,6 +1345,36 @@ grep -Fq '7 * 24 * 60 * 60' "${PET_SOURCES[@]}"
 grep -q 'CCPetsQuotaHistoryEnabled' "${PET_SOURCES[@]}"
 print "本地额度历史格式、采样间隔与默认开关测试通过"
 
+# 受限期间官方 rate_limits 仍会返回窗口百分比。一律丢掉的话，长期受限的 provider
+# 在 7 天里攒不下一个历史点，趋势曲线只剩"当前"这一个点、画不出线。两个用例各用
+# 一个独立的支持目录：RecordQuotaHistory 有 15 分钟采样闸门，同目录跑第二次必被拒。
+QUOTA_HISTORY_TMP="$(mktemp -d /tmp/cc-pets-quota-history-test.XXXXXX)"
+clang -fobjc-arc -mmacosx-version-min=13.0 \
+  -I"${PROJECT_DIR}/Sources/CCPets" \
+  -framework Foundation \
+  "${PROJECT_DIR}/Sources/CCPets/CCPetsQuotaHistory.m" \
+  "${PROJECT_DIR}/Sources/CCPets/CCPetsPaths.m" \
+  "${PROJECT_DIR}/tests/quota-history-harness.m" \
+  -o "${QUOTA_HISTORY_TMP}/quota-history-test"
+CC_PETS_APPLICATION_SUPPORT_DIR="${QUOTA_HISTORY_TMP}/fresh" \
+  "${QUOTA_HISTORY_TMP}/quota-history-test" fresh-snapshot
+CC_PETS_APPLICATION_SUPPORT_DIR="${QUOTA_HISTORY_TMP}/stale" \
+  "${QUOTA_HISTORY_TMP}/quota-history-test" stale-snapshot
+rm -rf "${QUOTA_HISTORY_TMP}"
+
+# 趋势列算的是 7 天窗口。exhaustedAt 没有窗口归属（撞墙的通常是 5 小时窗口），拿它
+# 一票否决整列，会出现左边 7 天还剩 45%、右边却说"等待官方额度刷新"的自相矛盾。
+grep -q 'weekUnknown' "${PET_SOURCES[@]}"
+grep -Fq 'exhausted && currentUsed == nil' "${PET_SOURCES[@]}"
+print "受限时 7 天趋势仍按官方余量判档测试通过"
+
+# 关掉终端窗口只销毁 pty，claude / codex 是 Node 进程，不一定跟着 SIGHUP 退出，会变成
+# 脱离控制终端的孤儿继续活着。只问 kill(pid, 0) 的话 pid 一直在，会话就永久挂在"在线"。
+grep -q 'ClientProcessAlive' "${PET_SOURCES[@]}"
+grep -q 'e_tdev' "${PET_SOURCES[@]}"
+grep -q 'NODEV' "${PET_SOURCES[@]}"
+print "客户端存活判定要求控制终端仍匹配测试通过"
+
 DASHBOARD_PREVIEW="${CLAUDE_USAGE_TMP}/dashboard.png"
 "${PROJECT_DIR}/.build/release/cc-pets" --render-dashboard "${DASHBOARD_PREVIEW}"
 [[ -s "${DASHBOARD_PREVIEW}" ]]
@@ -1602,9 +1668,10 @@ print "客户端退出后状态气泡清场测试通过"
 AGENT_STATUS_TMP="$(mktemp -d /tmp/cc-pets-agent-status-test.XXXXXX)"
 clang -fobjc-arc -mmacosx-version-min=13.0 \
   -I"${PROJECT_DIR}/Sources/CCPets" \
-  -framework Foundation \
+  -framework Foundation -framework AppKit \
   "${PROJECT_DIR}/Sources/CCPets/CCPetsPaths.m" \
   "${PROJECT_DIR}/Sources/CCPets/CCPetsEvents.m" \
+  "${PROJECT_DIR}/Sources/CCPets/CCPetsTerminalFocus.m" \
   "${PROJECT_DIR}/tests/agent-status-harness.m" \
   -o "${AGENT_STATUS_TMP}/agent-status-test"
 "${AGENT_STATUS_TMP}/agent-status-test"
