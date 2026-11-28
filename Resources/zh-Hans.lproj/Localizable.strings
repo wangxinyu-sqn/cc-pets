@@ -31,9 +31,9 @@
 "%1$@: %2$@ for %3$ld min." = "%@ 已%@ %ld 分钟。";
 "Recent Agent Sessions" = "最近 Agent 会话";
 " (%@)" = "（%@）";
-"Can't Change CC Bridge Settings" = "无法修改 CC Bridge 设置";
+"Can't Change Bridge Settings" = "无法修改桥接设置";
 "The cc-pets command-line tool wasn't found. Run cc-pets install in a terminal, then try again." = "没有找到 cc-pets 的命令行程序。请在终端执行一次 cc-pets install 后重试。";
-"CC Bridge Setup Failed" = "CC Bridge 设置失败";
+"Bridge Setup Failed" = "桥接设置失败";
 "The command failed." = "命令执行失败。";
 "Enabled. Running Codex sessions need a restart and must be trusted in /hooks; Claude sessions get the cc-bridge tools after a restart." = "已开启。已在运行的 Codex 会话需重启并在 /hooks 中信任；Claude 会话重启后才有 cc-bridge 工具。";
 "Disabled. The related hooks and MCP registrations were removed." = "已关闭，相关 hooks 与 MCP 注册已移除。";
@@ -194,13 +194,10 @@
 "Switch to %@" = "切换到桌宠 %@";
 "Delete %@" = "删除素材 %@";
 "%@ usage display" = "%@ 用量展示模式";
-"Enable" = "启用";
-"Let local Agent sessions exchange messages, wake supported sessions, and reserve files" = "让本机 Agent 会话互相发消息、唤醒可唤醒的会话并预留文件";
-"\nBelow: online sessions · active file reservations" = "\n下方为在线会话数 · 有效的文件预留数";
 "%lu sessions · %lu reserved" = "%lu 会话 · %lu 预留";
 "Auto-wake" = "自动唤醒";
 "Tab nicknames" = "标签昵称";
-"Append CC Bridge nicknames to terminal tab titles. Restart CLI sessions after turning this on." = "在终端标签标题末尾追加 CC Bridge 昵称。开启后，请重启 CLI 会话。";
+"Append Bridge nicknames to terminal tab titles. Restart CLI sessions after turning this on." = "在终端标签标题末尾追加桥接昵称。开启后，请重启 CLI 会话。";
 "Bridge nicknames in tab titles: {tabTitle}" = "终端标签昵称：{tabTitle}";
 "Wake idle sessions automatically. When off, messages wait in the inbox until that session's next input, which saves tokens. Codex needs a session restart" = "自动唤醒空闲会话。关闭后消息只进信箱，等对方下次收到你的输入时带入，可省 token；Codex 需重启会话生效";
 "Edit guard" = "编辑拦截";
@@ -208,19 +205,10 @@
 "Auto-approve" = "免审批";
 "Each group applies to the integrated Agents. Restart sessions to reload tool permissions" = "每组对已集成的 Agent 生效。请重启会话以加载工具权限";
 "Read" = "查看类";
-"Listing sessions, viewing reservations and reading the inbox. Read-only and safe" = "列出会话、查看预留、读取信箱免审批；只读，放开没有风险";
 "Send" = "发消息";
-"When on, Agents can message other sessions without asking" = "开启后，Agent 可以不经确认给其他会话发消息";
 "Reserve" = "文件预留";
-"Reserving and releasing files" = "预留 / 释放文件免审批";
 "Rename" = "改会话名";
-"Renaming the current session in CC Bridge" = "修改当前会话在 CC Bridge 中的名字免审批";
 "Pet alerts" = "桌宠提醒";
-"Only affects the pet, not Claude Code / Codex settings" = "只影响桌宠，不改 Claude Code / Codex 的配置";
-"Badge" = "消息角标";
-"Bottom-right of the status icon: blue for new deliveries, orange for a backed-up inbox" = "状态图标右下角：蓝色为新送达，橙色为信箱积压";
-"Notify" = "新消息通知";
-"Send a notification when a message is delivered between sessions (sender and recipient only, no content)" = "会话之间有消息送达时发一条系统通知（只含谁发给谁，不含正文）";
 "Pets" = "管理桌宠";
 "Show Status Card" = "显示消息气泡";
 "Import Codex Pets" = "导入 Codex 素材";
@@ -510,10 +498,8 @@
 "Couldn't tell whether Codex supports codex queue; failed deliveries fall back to the inbox." = "无法确认 Codex 是否支持 codex queue；投递失败时会自动退回信箱。";
 "Claude Code hooks written to {path}" = "Claude Code hooks 已写入 {path}";
 "Claude Code MCP registered: {MCP_NAME} (on first use, Claude asks according to your permission settings)" = "Claude Code MCP 已注册：{MCP_NAME}（首次调用时 Claude 会按你的权限设置询问是否允许）";
-"Claude Code MCP registration failed. Run manually: claude {shellQuote}" = "Claude Code MCP 注册失败，请手动执行：claude {shellQuote}";
 "Codex hooks written to {path}. Next time you start Codex, run /hooks and trust the cc-pets bridge hooks." = "Codex hooks 已写入 {path}——下次启动 Codex 后请执行 /hooks 并信任 cc-pets bridge 的 hooks。";
 "Codex MCP registered: {MCP_NAME}" = "Codex MCP 已注册：{MCP_NAME}";
-"Codex MCP registration failed. Run manually: codex {shellQuote}" = "Codex MCP 注册失败，请手动执行：codex {shellQuote}";
 "Removed the cc-bridge hooks and tool permissions from Claude Code." = "已移除 Claude Code 中的 cc-bridge hooks 与工具放行规则。";
 "Removed the cc-bridge hooks from Codex." = "已移除 Codex 中的 cc-bridge hooks。";
 "{flag} only accepts groups {TOOL_GROUPS} or tools {ALL_TOOLS}, got: {unknown}" = "{flag} 只接受分组 {TOOL_GROUPS} 或工具 {ALL_TOOLS}，收到：{unknown}";
@@ -687,7 +673,7 @@
 "Refusing to delete: {targetApp} isn't the CC Pets app (bundle ID mismatch)." = "拒绝删除：{targetApp} 不是 CC Pets 应用（Bundle ID 不匹配）。";
 "App removed: {targetApp}" = "已删除应用: {targetApp}";
 "App not installed: {targetApp}" = "未安装应用: {targetApp}";
-"Usage: cc-pets [command]\n\n  cc-pets                    Start the pet (prefers the copy installed in ~/Applications)\n  cc-pets install            Install or repair the shell / Claude Code / Codex integrations\n  cc-pets uninstall          Remove the integrations and restore the status line\n  cc-pets uninstall --purge  Also delete the app, app data and preferences (asks first; keeps pets and lines in ~/.cc-pets)\n  cc-pets uninstall-app      Only delete ~/Applications/CC Pets.app\n  cc-pets build              Rebuild\n  cc-pets clean              Clear caches (quit the pet first)\n  cc-pets doctor             Check the installation and integrations, with suggested fixes\n  cc-pets open [page]        Open the Main menu (pages: overview, sessions, usage, pet, accounts, alerts, general, diagnostics)\n  cc-pets paths [--json]     List where settings, caches and data live, and their sizes\n  cc-pets pet <command>      Manage pet sprites; see cc-pets pet help\n  cc-pets bridge <command>   CC Bridge cross-session messaging; see cc-pets bridge --help\n  cc-pets --status           Print the current Codex quota\n  cc-pets --history          Print quota history (JSON)\n  cc-pets --foreground       Run the pet in the foreground (for debugging)\n  cc-pets -v, --version      Show the version\n  cc-pets -h, --help         Show this help\n\ncodex-with-pet / claude-with-pet / agy-with-pet start the pet along with the CLI." = "用法：cc-pets [命令]\n\n  cc-pets                    启动桌宠（优先使用 ~/Applications 里安装的版本）\n  cc-pets install            安装或修复 shell / Claude Code / Codex 集成\n  cc-pets uninstall          移除集成并恢复 status line\n  cc-pets uninstall --purge  同时删除 App、应用数据和偏好（会先确认；保留 ~/.cc-pets 的素材与台词）\n  cc-pets uninstall-app      只删除 ~/Applications/CC Pets.app\n  cc-pets build              重新构建\n  cc-pets clean              清理缓存（需先退出桌宠）\n  cc-pets doctor             检查安装与各项集成是否正常，并给出修复建议\n  cc-pets open [页面]        打开主菜单（页面：overview、sessions、usage、pet、accounts、alerts、general、diagnostics）\n  cc-pets paths [--json]     列出配置、缓存与数据的存放位置和大小\n  cc-pets pet <命令>         管理桌宠素材，详见 cc-pets pet help\n  cc-pets bridge <命令>      CC Bridge 跨会话消息，详见 cc-pets bridge --help\n  cc-pets --status           输出 Codex 当前额度\n  cc-pets --history          输出额度历史（JSON）\n  cc-pets --foreground       在前台运行桌宠（调试用）\n  cc-pets -v, --version      显示版本\n  cc-pets -h, --help         显示本帮助\n\ncodex-with-pet / claude-with-pet / agy-with-pet 会在启动 CLI 的同时拉起桌宠。";
+"Usage: cc-pets [command]\n\n  cc-pets                    Start the pet (prefers the copy installed in ~/Applications)\n  cc-pets install            Install or repair the shell / Claude Code / Codex integrations\n  cc-pets uninstall          Remove the integrations and restore the status line\n  cc-pets uninstall --purge  Also delete the app, app data and preferences (asks first; keeps pets and lines in ~/.cc-pets)\n  cc-pets uninstall-app      Only delete ~/Applications/CC Pets.app\n  cc-pets build              Rebuild\n  cc-pets clean              Clear caches (quit the pet first)\n  cc-pets doctor             Check the installation and integrations, with suggested fixes\n  cc-pets open [page]        Open the Main menu (pages: overview, sessions, bridge, usage, pet, accounts, alerts, general, diagnostics)\n  cc-pets paths [--json]     List where settings, caches and data live, and their sizes\n  cc-pets pet <command>      Manage pet sprites; see cc-pets pet help\n  cc-pets bridge <command>   CC Bridge cross-session messaging; see cc-pets bridge --help\n  cc-pets --status           Print the current Codex quota\n  cc-pets --history          Print quota history (JSON)\n  cc-pets --foreground       Run the pet in the foreground (for debugging)\n  cc-pets -v, --version      Show the version\n  cc-pets -h, --help         Show this help\n\ncodex-with-pet / claude-with-pet / agy-with-pet start the pet along with the CLI." = "用法：cc-pets [命令]\n\n  cc-pets                    启动桌宠（优先使用 ~/Applications 里安装的版本）\n  cc-pets install            安装或修复 shell / Claude Code / Codex 集成\n  cc-pets uninstall          移除集成并恢复 status line\n  cc-pets uninstall --purge  同时删除 App、应用数据和偏好（会先确认；保留 ~/.cc-pets 的素材与台词）\n  cc-pets uninstall-app      只删除 ~/Applications/CC Pets.app\n  cc-pets build              重新构建\n  cc-pets clean              清理缓存（需先退出桌宠）\n  cc-pets doctor             检查安装与各项集成是否正常，并给出修复建议\n  cc-pets open [页面]        打开主菜单（页面：overview、sessions、bridge、usage、pet、accounts、alerts、general、diagnostics）\n  cc-pets paths [--json]     列出配置、缓存与数据的存放位置和大小\n  cc-pets pet <命令>         管理桌宠素材，详见 cc-pets pet help\n  cc-pets bridge <命令>      CC Bridge 跨会话消息，详见 cc-pets bridge --help\n  cc-pets --status           输出 Codex 当前额度\n  cc-pets --history          输出额度历史（JSON）\n  cc-pets --foreground       在前台运行桌宠（调试用）\n  cc-pets -v, --version      显示版本\n  cc-pets -h, --help         显示本帮助\n\ncodex-with-pet / claude-with-pet / agy-with-pet 会在启动 CLI 的同时拉起桌宠。";
 "Main menu" = "主菜单";
 "Settings…" = "设置…";
 "Window" = "窗口";
@@ -696,7 +682,6 @@
 "General" = "通用";
 "Pet sprites folder" = "素材文件夹";
 "Show in Finder" = "在访达中显示";
-"Enabling CC Bridge, auto-approve and other options that change Claude Code / Codex settings stay in the pet's right-click menu." = "启用 CC Bridge、免审批等会改动 Claude Code / Codex 配置的选项仍在桌宠右键菜单里。";
 "1 session online" = "1 个会话在线";
 "%ld sessions online" = "%ld 个会话在线";
 "Diagnostics" = "诊断";
@@ -743,8 +728,8 @@
 "React when poked" = "戳它会有反应";
 "Desktop Status Card" = "桌面状态卡";
 "The card next to the pet while an Agent is working" = "Agent 工作时宠物旁边的那张卡片";
-"CC Bridge unread badge" = "CC Bridge 未读角标";
-"CC Bridge message notifications" = "CC Bridge 新消息通知";
+"Bridge unread badge" = "桥接未读角标";
+"Bridge message notifications" = "桥接新消息通知";
 "Only who sent it to whom, never the message" = "只含谁发给谁，不含正文";
 "macOS 26 or later" = "macOS 26 及以上";
 "Works on all macOS versions" = "适用于所有系统";
@@ -775,23 +760,19 @@
 "View" = "查看";
 "5-hour left" = "5 小时剩余";
 "Weekly left" = "本周剩余";
-"%lu CC Bridge messages recently" = "最近 %lu 条 CC Bridge 消息";
-"%lu waiting in an inbox" = "%lu 条在信箱里等待投递";
 "Status" = "状态";
 "Session" = "会话";
 "Doing" = "当前在做";
 "Last Active" = "最近活动";
 "%lu waiting" = "%lu 条待投递";
 "Go to Terminal" = "跳到终端";
-"CC Bridge is off" = "CC Bridge 未开启";
-"Turn it on from the pet's right-click menu to let sessions message each other." = "在宠物右键菜单里开启后，会话之间就能互相发消息。";
+"Bridge is off" = "桥接未开启";
 "1 message waiting. Say anything in that terminal to deliver it." = "1 条消息待投递，去那个终端说句话就会送达。";
 "%lu messages waiting. Say anything in that terminal to deliver them." = "%lu 条消息待投递，去那个终端说句话就会送达。";
 "Waiting" = "待投递";
 "Delivered" = "已送达";
 "Unread" = "未读";
 "No messages recently" = "最近没有消息";
-"Only message exchanges are displayed" = "仅显示消息交互";
 "Total today" = "今日总用量";
 "Cached Input" = "缓存输入";
 "Includes %@ cache write" = "含缓存写 %@";
@@ -901,9 +882,7 @@
 
 "CC Bridge is off, but some integrations could not be removed. Retry disable after resolving the errors above." = "CC Bridge 已关闭，但部分集成未能移除。请解决上述错误后重新执行 disable。";
 
-"Could not remove MCP {name} from {home}." = "无法从 {home} 移除 MCP {name}。";
 
-"Removed MCP {name} from {home}." = "已从 {home} 移除 MCP {name}。";
 
 "Current session identity is unavailable or ambiguous (you can view sessions, but cannot act as one)." = "当前会话身份缺失或不明确（可以查看会话列表，但不能以任何会话身份操作）。";
 
@@ -1068,7 +1047,6 @@
 "The Antigravity hook name is already in use." = "Antigravity Hook 名称已被使用。";
 "Antigravity CLI hooks configured in {path}." = "已在 {path} 配置 Antigravity CLI Hooks。";
 "The Antigravity MCP server name is already in use." = "Antigravity MCP 服务名称已被使用。";
-"Expected an Antigravity permissions object with an allow array." = "Antigravity 的 permissions 必须是对象，allow 必须是数组。";
 "Registered CC Bridge MCP for Antigravity CLI." = "已为 Antigravity CLI 注册 CC Bridge MCP。";
 "Removed CC Bridge MCP from Antigravity CLI." = "已从 Antigravity CLI 移除 CC Bridge MCP。";
 
@@ -1122,7 +1100,6 @@
 "%ld pages" = "共 %ld 页";
 
 /* Slack Socket Mode adapter */
-"Usage: cc-pets bridge slack [config.json] (tokens in JSON or SLACK_APP_TOKEN and SLACK_BOT_TOKEN)" = "用法：cc-pets bridge slack [config.json]（令牌可写入 JSON，或通过 SLACK_APP_TOKEN 和 SLACK_BOT_TOKEN 提供）";
 "Configured Slack agents appear while the Slack adapter is running. " = "Slack 适配器运行期间，也会列出已配置的 Slack Agent。";
 "Slack recipients forward the message to their configured Slack channel. Preserve the full thread address when replying. " = "发给 Slack 收件人的消息会发布到配置的频道。回复时请保留完整的线程地址。";
 "This thread address requires a Slack recipient." = "该线程地址需要指定 Slack 收件人。";
@@ -1138,7 +1115,6 @@
 "System wake notifications unavailable; Socket Mode will use idle pings." = "系统唤醒通知不可用，Socket Mode 将通过空闲心跳检测连接。";
 "Socket Mode connected." = "Socket Mode 已连接。";
 "Set discovery.channel or configure peers in the agents array in the Slack configuration." = "请在 Slack 配置中设置 discovery.channel，或在 agents 数组中配置对端。";
-"Set app_token (xapp-) and bot_token (xoxb-) in the Slack JSON, or supply the tokens in the terminal environment." = "请在 Slack JSON 中填写 app_token（xapp-）和 bot_token（xoxb-），或使用终端环境变量提供令牌。";
 "The Slack adapter is already running." = "Slack 适配器已经在运行。";
 "A Slack peer cannot be the adapter itself." = "Slack 对端不能是适配器自己。";
 "Slack agent name already in use." = "Slack Agent 名字已被使用。";
@@ -1150,7 +1126,6 @@
 "The remote Bridge refused delivery." = "远端 Bridge 拒绝了投递。";
 "Message exceeds Slack’s wire size limit." = "消息编码后超过 Slack 的发送大小限制。";
 "Remote directory exceeds Slack’s wire size limit." = "远程会话名单编码后超过 Slack 的发送大小限制。";
-"Slack token configuration must be owned by you and allow mode 0600." = "Slack 令牌配置文件须归当前用户所有，并允许设为 0600 权限。";
 "Provide up to eight attachment file paths." = "最多可发送 8 个附件，请提供文件路径。";
 "Invalid attachment path." = "附件路径无效。";
 "Cannot read attachment: %@" = "无法读取附件：%@";
@@ -1166,3 +1141,49 @@
 "List local and remote CC Bridge recipients, with their location (" = "列出可接收消息的 CC Bridge 会话并标明本地或远程（";
 "Local" = "本地";
 "Local sessions exchange text. Put the local file path in the message instead." = "本地会话使用文本投递，请在消息正文中填写本机文件路径。";
+"Reconnecting…" = "正在重连…";
+"Connecting…" = "正在连接…";
+"Usage: cc-pets bridge slack [config.json] (tokens in Keychain or SLACK_APP_TOKEN and SLACK_BOT_TOKEN)" = "用法：cc-pets bridge slack [config.json]（令牌来自钥匙串或 SLACK_APP_TOKEN 和 SLACK_BOT_TOKEN）";
+"Configure both Slack tokens in Bridge → Remote Connections." = "请在「桥接 → 远程连接」中配置两个 Slack 令牌。";
+"Keychain is unavailable." = "无法访问钥匙串。";
+"Check the discovery channel, computer name and bot addresses. Each bot must have a unique name and channel/bot pair." = "请检查发现频道、电脑名称和机器人地址。机器人名称和频道内的 Bot ID 必须唯一。";
+"Use an xapp- App-Level Token and an xoxb- Bot Token." = "App-Level Token 应以 xapp- 开头，Bot Token 应以 xoxb- 开头。";
+"Slack configuration changed. Reopen Remote Connections before saving." = "远程配置已更改或无法解析。请检查 bridge-remote.json，然后重新打开「远程连接」再保存。";
+"Message Activity" = "消息动态";
+"Remote Connections" = "远程连接";
+"Bridge Settings" = "桥接设置";
+"Enable Bridge" = "启用桥接";
+"Session Behavior" = "会话行为";
+"Enable Bridge to exchange messages between sessions." = "启用桥接后，会话之间可以互发消息。";
+"Manage Bridge alerts…" = "管理桥接提醒…";
+"Enable Slack connection" = "启用 Slack 连接";
+"Configured · type to replace" = "已配置，输入新令牌可更换";
+"Channel ID" = "频道 ID";
+"Computer name" = "本机名称";
+"Remove credentials…" = "移除凭据…";
+"Running in a terminal" = "正在终端中运行";
+"Off" = "已关闭";
+"Waiting for Bridge to be enabled" = "等待启用桥接";
+"Remove" = "移除";
+"Slack settings" = "Slack 设置";
+"Remove Slack credentials?" = "移除 Slack 凭据？";
+"This disables the connection and removes both tokens from Keychain." = "将关闭 Slack 连接，并从钥匙串移除两个令牌。";
+"Discovery channel: %@" = "发现频道：%@";
+"Bridge" = "桥接";
+"Enter the token again." = "请重新输入令牌。";
+"Invalid bot identity." = "Slack 未识别出此机器人的身份。";
+"Check the channel ID and invite the bot to that channel." = "请核对频道 ID，并将机器人邀请到该频道。";
+"Grant channels:history for public channels or groups:history for private channels." = "请为公开频道授予 channels:history 权限，为私有频道授予 groups:history 权限。";
+"Slack did not complete the Socket Mode handshake." = "Slack 的 Socket Mode 握手失败，请检查网络和 Socket Mode 配置。";
+"Test connection and save" = "测试连接并保存";
+"Settings were not saved. Check the highlighted fields." = "保存失败，请检查标红的字段。";
+"Required" = "必填";
+"Enter a token starting with xapp-." = "请输入以 xapp- 开头的令牌。";
+"Enter a token starting with xoxb-." = "请输入以 xoxb- 开头的令牌。";
+"Enter a Slack channel ID starting with C or G." = "请输入以 C 或 G 开头的 Slack 频道 ID。";
+"Use 1–40 letters, digits, dots, underscores or hyphens, starting with a letter or digit." = "请输入 1–40 个英文字母、数字、点、下划线或短横线，并以字母或数字开头。";
+"Testing Slack connection…" = "正在测试 Slack 连接…";
+"Slack connection test passed. Settings saved." = "Slack 连接测试通过，设置已保存。";
+"Connection verified, but the settings could not be saved." = "连接测试通过，设置保存失败。";
+"Keychain access needed. Click Test connection and save in Remote Connections." = "钥匙串需要授权，请在「远程连接」中点击「测试连接并保存」。";
+"CC Pets accesses Keychain only to save and retrieve your two Slack connection tokens. If macOS asks, you can allow access once. Always Allow usually lets this app read that token again without asking." = "CC Pets 访问钥匙串仅用于保存和读取这两个 Slack 连接令牌。macOS 询问时，你可以选择「允许一次」。选择「始终允许」后，本应用再次读取该令牌时通常无需确认。";

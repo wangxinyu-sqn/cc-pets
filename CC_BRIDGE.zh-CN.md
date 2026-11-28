@@ -17,7 +17,7 @@ cc-pets bridge status     # 查看开关、选项、在线会话与最近消息
 cc-pets bridge disable    # 移除全部 CC Bridge 集成并关闭
 ```
 
-也可以在桌宠右键菜单的 **CC Bridge** 里直接开关，见下文[桌宠菜单](#桌宠菜单)。
+也可以在主菜单的 **桥接** 页直接开关，见下文[桌宠菜单](#桌宠菜单)。
 
 开启后：
 
@@ -29,7 +29,11 @@ cc-pets bridge disable    # 移除全部 CC Bridge 集成并关闭
 - Codex 默认每次调用 MCP 工具都要审批（审批策略为 `never` 时调用会直接失败）；Claude Code 首次调用时也会按你的
   权限设置询问。可以按需放开，见下方[选项](#选项)。
 
-`cc-pets uninstall` 也会一并移除 CC Bridge 集成；重装或升级时，已开启的 CC Bridge 会按原选项自动重写集成。
+`cc-pets uninstall` 也会一并移除 CC Bridge 集成；重装或升级时，已开启的 CC Bridge 会核对现有配置，只补缺项或更新过期路径。Codex 桌面端已保存的工具授权会保留。
+
+Codex、Claude Code 和 agy 的 hook 按事件、匹配条件和处理命令逐条合并。重装保留等效 handler 的位置，关闭桥接只清理桥接功能的条目。Claude 和 agy 刷新时保留已有放行，取消选项或关闭时撤销 Pet 已选的规则，并保留其余工具授权。
+
+关闭自定义过的 MCP 注册时，Codex 和 agy 分别使用 `enabled = false` 和 `disabled: true` 保留配置。Claude 的用户级服务会从活动注册中移出，其自定义配置保存在该 Claude Home 的 `.cc-pets-paused-mcp.json`（权限 `0600`），重新启用时恢复。其他程序占用了同名服务时，安装会报告冲突。
 
 ### 选项
 
@@ -46,7 +50,7 @@ cc-pets bridge configure --edit-guard=off       # 关闭编辑前预留拦截
 
 | 选项 | 说明 |
 | --- | --- |
-| `--approve` / `--codex-approve` / `--claude-allow` | 免审批的工具。可写分组 `view`（列会话、查预留、读信箱）、`send`（发消息）、`reserve`（预留 / 释放）、`name`（改名），或具体工具名。Codex 写入 `~/.codex/config.toml` 末尾的带标记块，Claude 写入 `~/.claude/settings.json` 的 `permissions.allow`（只增删 `mcp__cc-bridge__*` 条目）；`disable` 时一并移除 |
+| `--approve` / `--codex-approve` / `--claude-allow` | 免审批的工具。可写分组 `view`（列会话、查预留、读信箱）、`send`（发消息）、`reserve`（预留 / 释放）、`name`（改名），或具体工具名。Codex 写入 `~/.codex/config.toml` 末尾的带标记块，Claude 写入 `~/.claude/settings.json` 的 `permissions.allow`（只增删 `mcp__cc-bridge__*` 条目）；`disable` 移除由 Bridge 添加的审批。若 Codex 中还有用户自定义的服务字段、环境变量或工具授权，保留服务配置并设为 `enabled = false` |
 | `--agy-allow` | 单独设置 Antigravity CLI 的免审批工具，接受同一组分组或工具名。`--agy-allow=` 清空列表。`--approve` 作用于 Codex 和 Claude |
 | `--agy-app=on\|off` | 在默认 Gemini 根目录启用 Antigravity App Sidecar，默认关闭 |
 | `--tab-title=on\|off` | 在 CLI 终端标签标题末尾追加 Bridge 昵称，默认关闭 |
@@ -59,7 +63,7 @@ cc-pets bridge configure --edit-guard=off       # 关闭编辑前预留拦截
 
 Claude 侧的改动会被热加载；Codex 侧（审批、hooks）需要重启 Codex 会话，hooks 变化后还要在 `/hooks` 中重新信任。
 
-在桌宠右键菜单中打开 **CC Bridge → 标签昵称**，再通过 CC Pets 的终端集成重启 CLI 会话。
+在主菜单中打开 **桥接 → 桥接设置 → 标签昵称**，再通过 CC Pets 的终端集成重启 CLI 会话。
 标签标题可显示为 `修复额度轮询 | cc-pets · 知更鸟`。
 
 ## 使用
@@ -86,27 +90,11 @@ Agent 会调用这些 MCP 工具：
 
 1. 给 Bridge 创建一个 Slack App，启用 Socket Mode，生成带 `connections:write` 的 App-Level Token。为 bot 添加 `chat:write`。公开频道需要 `channels:history` 并订阅 bot 事件 `message.channels`；私有频道需要 `groups:history` 和 `message.groups`。安装或重新安装 App，再将 Bridge 和对端机器人都邀请到目标频道。[Slack Socket Mode 配置](https://docs.slack.dev/apis/events-api/using-socket-mode/)
 2. 让对端 agent 接受 Bridge bot 的频道 @ 提及，并用 `thread_ts` 在原消息下回复。记录频道 ID 和**对端**的两个 ID。消息事件中的 `bot_id` 识别发送方，bot 的成员 ID（`user_id`）用于 @ 提及。管理对端 App 的人也可以从该 bot 的 `auth.test` 结果获取两个 ID。[Slack 机器人消息](https://docs.slack.dev/reference/events/message/bot_message/) · [auth.test](https://docs.slack.dev/reference/methods/auth.test/)
-3. 将配置保存到 `~/.cc-pets/bridge-slack.json`。把示例 ID 换成真实值，每个 agent 加一项。同一频道中的每个 bot 只配置一次。
+3. 打开 **主菜单 → 桥接 → 远程连接**，输入本机 Slack App 的 App-Level Token 和 Bot Token。在 Slack 配置卡中填写共用频道 ID 和本机名称。点击「测试连接并保存」会验证 Bot 身份、频道读取权限和 Socket Mode 握手。通过后再保存设置。启用 Slack 连接后，在页头启用 CC Bridge。
 
-```json
-{
-  "enabled": true,
-  "app_token": "xapp-…",
-  "bot_token": "xoxb-…",
-  "agents": [
-    {
-      "name": "slack-reviewer",
-      "channel": "C0123456789",
-      "bot_id": "B0123456789",
-      "user_id": "U0123456789"
-    }
-  ]
-}
-```
+首次保存或更新 Token 时，页面会说明钥匙串的用途。两个令牌分别保存在当前用户的 macOS 钥匙串中，更换 Token 会更新原条目。选择「始终允许」后，同一应用通常可以直接读取已授权的条目。后台连接静默读取凭据；需要授权时，请在「远程连接」中点击「测试连接并保存」。桌宠自动重载已保存的设置；关闭 Slack 连接会保留凭据。旧版的 `bridge-slack.json` 已停用，升级后首次使用远程连接时需要重新配置。
 
-在默认 JSON 中填好本机 App 的两个真实令牌，右键桌宠启用 **CC Bridge**。打开支持此功能的 CC Pets 后，桌宠会自动连接 Slack；运行期间保存配置会重新加载，设置 `"enabled": false`、关闭 Bridge 或退出桌宠都会停止由桌宠启动的适配器。缺省 `enabled` 时自动启动关闭。含令牌的 JSON 以明文保存在本机，读取时会将权限设为仅当前用户读写（`0600`）。
-
-手动调试仍可运行 `cc-pets bridge slack [config.json]`。手动启动优先使用 JSON 中的 `app_token`、`bot_token`，缺少哪个就读取对应的 `SLACK_APP_TOKEN`、`SLACK_BOT_TOKEN` 环境变量。桌宠会与已运行的手动实例共用单实例锁。使用源码构建时，需运行新构建的桌宠，并让 Agent 会话加载同一版 hooks 和 MCP。
+手动运行 `cc-pets bridge slack [config.json]` 时，前台适配器也能读取钥匙串。临时调试可用 `SLACK_APP_TOKEN` 和 `SLACK_BOT_TOKEN` 分别覆盖对应令牌。桌宠与前台命令共用单实例锁。
 
 - **本地发起**。调用 `list_agents` 找到 Slack 收件人，再用 `send_message(to="slack-reviewer", message="请审查接口变更")` 发起新线程。消息中的本地会话名、ref 和正文会发布到配置的 Slack 频道。可以用 `cc-pets bridge status` 查看最近的回执。
 - **Slack 发起**。让已配置的机器人在频道中新发一条 `@CCBridge 发给 codex-main 请审查接口变更`。通过 API 发送时用 `<@U…>` 表示 Bridge bot 的成员 ID。适配器也接受 `@CCBridge to codex-main …`。目标是在线的本地会话。
@@ -114,27 +102,26 @@ Agent 会调用这些 MCP 工具：
 
 #### 通过 Slack 频道自动发现电脑
 
-每台 Mac 运行自己的 Bridge 和 Slack App，把这些 App 邀请进同一个工作区的同一个私有频道。频道是登记和发现的范围。在每台电脑的 `~/.cc-pets/bridge-slack.json` 填同一个频道 ID；想指定本机的地址前缀时可以加 `name`。例如 UniverseWang 这台 Mac 使用：
+每台 Mac 运行自己的 Bridge 和 Slack App，把这些 App 邀请进同一个工作区的同一个私有频道。频道是登记和发现的范围。在每台电脑的「远程连接」中填写同一个频道 ID，并为本机填写一个名称。界面将设置保存到 `~/.cc-pets/bridge-remote.json` 的 `slack` 键。尚未保存凭据的配置示例：
 
 ```json
 {
-  "enabled": true,
-  "app_token": "xapp-…",
-  "bot_token": "xoxb-…",
-  "discovery": {
-    "channel": "C0123456789",
-    "name": "UniverseWang"
+  "slack": {
+    "enabled": false,
+    "discovery": { "channel": "C0123456789", "name": "UniverseWang" },
+    "app_token": "",
+    "bot_token": ""
   }
 }
 ```
 
-将示例频道 ID 替换成真实值。本机名可以包含大小写字母、数字、点、下划线和短横线。省略 `name` 时会使用 Slack bot 的用户名生成地址前缀。每台电脑把自己 App 的两个令牌填入同一 JSON，打开桌宠并启用 Bridge。适配器连上 Slack 后会主动在频道登记，并公布本机在线会话。
+保存凭据后，两个字段只含 `keychain:` 引用。本机名可以包含大小写字母、数字、点、下划线和短横线。手动编辑 JSON 省略 `name` 时会使用 Slack bot 的用户名生成地址前缀。在每台电脑的「远程连接」中保存本机凭据并启用连接。适配器连上 Slack 后会主动在频道登记，并公布本机在线会话。
 
 - **加入第三台电脑**。邀请第三台电脑的 Slack App 进入这个频道，让它使用同一频道 ID 启动适配器。已经启用频道发现的电脑会自动看到新会话，无需更新或重启；整个过程无需交换 bot ID 或成员 ID。
 - **查看和发送**。调用 `list_agents` 或运行 `cc-pets bridge list`。例如，其他电脑会看到 `UniverseWang/reviewer` 的 Agent 类型和忙闲状态。使用 `send_message(to="UniverseWang/reviewer", message="请审查代码")` 跨机发送；本机仍使用 `reviewer`。回复使用来信中的完整地址，回到原 Slack 线程。对方 Bridge 确认接收后，回执更新为已送达。
 - **在线状态**。适配器约每 5 秒检查变化，每 30 秒刷新频道中的状态消息，90 秒没有续期的名单会过期。每台电脑只发布本机的会话名称、路由标识、Agent 类型和忙闲状态。
 - **频道成员**。同一发现频道中发布有效登记的 Bridge 可以看到彼此的会话并发消息。请用参与协作的机器共用的频道。普通聊天消息不会触发登记。
-- **兼容已有配置**。原来的 `agents` 数组仍可单独使用，也可与 `discovery` 并存。普通 Slack 机器人继续按上述显式条目配置；带 `"bridge": true` 的已有条目继续使用本机给它设置的名字。已有电脑首次改用频道发现时，需更新到支持此功能的版本并重启一次适配器。
+- **指定机器人**。`slack.agents` 数组仍可单独使用，也可与 `discovery` 并存。手动在 JSON 中为每个机器人填写 `name`、`channel`、`bot_id` 和 `user_id`。带 `"bridge": true` 的条目使用本机指定的对端名称。
 
 适配器收到 Slack 握手后，连续 30 秒没有收到消息就会发送 WebSocket ping；探测失败或 10 秒内没有收到 pong时，自动重新连接。Mac 从系统睡眠唤醒后，适配器会关闭旧连接，重新向 Slack 获取连接地址。桌宠管理和终端前台运行都使用同一机制。
 
@@ -329,7 +316,7 @@ hook、watcher 或 `check_inbox` 会恢复未确认消息。在输出已到达�
 
 ## 桌宠菜单
 
-桌宠右键菜单 → **CC Bridge**：
+在主菜单打开 **桥接**，也可运行 `cc-pets open bridge`。
 
 | 开关 | 作用 |
 | --- | --- |
@@ -340,7 +327,7 @@ hook、watcher 或 `check_inbox` 会恢复未确认消息。在输出已到达�
 | 桌宠提醒 › 消息角标 | 只影响桌宠：是否显示状态图标右下角的消息角标 |
 | 桌宠提醒 › 新消息通知 | 只影响桌宠：会话之间有消息送达时发系统通知（只含谁发给谁，不含正文），首次开启时申请通知权限 |
 
-"启用"下方显示"N 会话 · M 预留"（在线会话数与有效预留数），各开关悬停可看说明。CC Bridge 未开启时菜单里只有"启用"一项，开启后重新打开菜单即可看到其余开关。
+页头显示在线会话数和有效预留数。「消息动态」显示待投递和最近送达的消息；「桥接设置」管理上述选项；「远程连接」支持在 Bridge 关闭时预先配置 Slack。
 菜单开关通过 `~/.cc-pets/bridge-cli.json` 找到命令行程序（每次 `cc-pets install` 时写入）；找不到时会提示重新安装。
 
 ## 安全与隐私

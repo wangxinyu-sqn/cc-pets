@@ -2,6 +2,7 @@
 #import "CCPetsIntegrations.h"
 #import "CCPetsAntigravityConfig.h"
 #import "CCPetsJSON.h"
+#import "CCPetsHookMerge.h"
 #import "CCPetsProfiles.h"
 #import "CCPetsCLISupport.h"
 #import <sys/stat.h>
@@ -27,76 +28,49 @@ static CCPetsJSONObject *LoadConfig(NSString *path, NSString **errorMessage) {
         if (errorMessage) *errorMessage = message;
         return nil;
     }
-    if (![config isKindOfClass:CCPetsJSONObject.class]) config = [CCPetsJSONObject new];
-    if (![config[@"hooks"] isKindOfClass:CCPetsJSONObject.class]) config[@"hooks"] = [CCPetsJSONObject new];
+    if (config && (![config isKindOfClass:CCPetsJSONObject.class] ||
+        (config[@"hooks"] && ![config[@"hooks"] isKindOfClass:CCPetsJSONObject.class]))) {
+        if (errorMessage) *errorMessage = L(@"Expected a JSON object.");
+        return nil;
+    }
+    config = config ?: [CCPetsJSONObject new];
+    if (!config[@"hooks"]) config[@"hooks"] = [CCPetsJSONObject new];
     return config;
 }
 
 // 从源码目录安装时指向 .build/release，从 App 里修复时指向包内的程序；两种都要认，
 // 否则另一种写进去的条目永远摘不掉，每装一次就多一份。
 BOOL CCPetsIsManagedHookCommand(id value, NSString *marker, NSString *executable) {
-    if (![value isKindOfClass:NSString.class] || ![value hasPrefix:[marker stringByAppendingString:@" "]]) return NO;
-    for (NSString *directory in @[@"/.build/release/", @".app/Contents/MacOS/"]) {
-        if ([value hasSuffix:[NSString stringWithFormat:@"%@%@' --hook", directory, executable]]) return YES;
-    }
-    return NO;
+    NSMutableDictionary *env = [NSMutableDictionary dictionary];
+    NSArray *args = CCPetsHookInvocation(value, env);
+    if (args.count != 2 || ![args.lastObject isEqual:@"--hook"] || ![[args[0] lastPathComponent] isEqual:executable]) return NO;
+    NSArray *pair = [marker componentsSeparatedByString:@"="];
+    if ([env[pair.firstObject] isEqual:pair.lastObject]) return YES;
+    return [executable isEqual:@"cc-pets"] && !env[@"CC_PETS_CLAUDE_AGENT_HOOK"] &&
+        !env[@"CC_PETS_CODEX_AGENT_HOOK"] && !env[@"CLAUDE_PET_AGENT_HOOK"] && !env[@"CODEX_PET_AGENT_HOOK"];
 }
 
-// 摘掉 signatures 认领的 handler，别的工具的原样保留；一个 group 里只剩我们的条目时整个 group 删掉。
-// pruneEmpty 用于卸载：事件下一个 group 都不剩就删掉这个事件，hooks 整个空了也删掉。
-// 返回是否真的摘掉了东西。
-static BOOL RemoveManagedHooks(CCPetsJSONObject *config, NSArray<NSArray<NSString *> *> *signatures, BOOL pruneEmpty) {
+static BOOL ReconcilePetHooks(CCPetsJSONObject *config, NSArray *signatures, NSString *command, NSArray *events) {
     CCPetsJSONObject *hooks = config[@"hooks"];
     if (![hooks isKindOfClass:CCPetsJSONObject.class]) return NO;
+    NSMutableOrderedSet *all = [NSMutableOrderedSet orderedSetWithArray:hooks.keys];
+    [all addObjectsFromArray:events];
     BOOL changed = NO;
-    for (NSString *event in hooks.keys) {
-        NSArray *groups = hooks[event];
-        if (![groups isKindOfClass:NSArray.class]) continue;
-        NSMutableArray *kept = [NSMutableArray array];
-        for (id group in groups) {
-            NSArray *handlers = [group isKindOfClass:CCPetsJSONObject.class] ? ((CCPetsJSONObject *)group)[@"hooks"] : nil;
-            if (![handlers isKindOfClass:NSArray.class]) {
-                [kept addObject:group];
-                continue;
-            }
-            NSMutableArray *remaining = [NSMutableArray array];
-            for (id handler in handlers) {
-                id handlerCommand = [handler isKindOfClass:CCPetsJSONObject.class] ? ((CCPetsJSONObject *)handler)[@"command"] : nil;
-                BOOL managed = NO;
-                for (NSArray<NSString *> *signature in signatures) {
-                    if (CCPetsIsManagedHookCommand(handlerCommand, signature[0], signature[1])) managed = YES;
-                }
-                if (!managed) [remaining addObject:handler];
-            }
-            if (remaining.count != handlers.count) changed = YES;
-            if (remaining.count == 0) continue;
-            CCPetsJSONObject *updated = [group copy];
-            updated[@"hooks"] = remaining;
-            [kept addObject:updated];
-        }
-        if (pruneEmpty && kept.count == 0) [hooks removeObjectForKey:event];
-        else hooks[event] = kept;
+    for (NSString *event in all) {
+        NSArray *desired = [events containsObject:event] ? @[@{@"hooks": @[@{@"type": @"command", @"command":command, @"timeout":@3}]}] : @[];
+        id current = hooks[event];
+        if (current && ![current isKindOfClass:NSArray.class] && !desired.count) continue;
+        NSArray *entries = CCPetsMergeHookEntries(current, desired, YES, ^NSString *(id candidate) {
+            for (NSArray *signature in signatures)
+                if (CCPetsIsManagedHookCommand(candidate, signature[0], signature[1])) return @"pet";
+            return nil;
+        });
+        if ([CCPetsJSONStringify(entries) isEqual:CCPetsJSONStringify(current ?: @[])]) continue;
+        changed = YES;
+        if (entries.count) hooks[event] = entries; else [hooks removeObjectForKey:event];
     }
-    if (pruneEmpty && hooks.keys.count == 0) [config removeObjectForKey:@"hooks"];
+    if (changed && !hooks.keys.count) [config removeObjectForKey:@"hooks"];
     return changed;
-}
-
-// 先摘掉旧的自家条目（含改名前 codex-pet 的），再给每个事件追加一条，重复安装保持幂等。
-static void ReplaceManagedHooks(CCPetsJSONObject *config, NSArray<NSArray<NSString *> *> *signatures,
-                                NSString *command, NSArray<NSString *> *events) {
-    RemoveManagedHooks(config, signatures, NO);
-    CCPetsJSONObject *hooks = config[@"hooks"];
-    for (NSString *event in events) {
-        NSMutableArray *groups = [hooks[event] isKindOfClass:NSArray.class] ? [hooks[event] mutableCopy] : [NSMutableArray array];
-        CCPetsJSONObject *handler = [CCPetsJSONObject new];
-        handler[@"type"] = @"command";
-        handler[@"command"] = command;
-        handler[@"timeout"] = @3;
-        CCPetsJSONObject *group = [CCPetsJSONObject new];
-        group[@"hooks"] = @[handler];
-        [groups addObject:group];
-        hooks[event] = groups;
-    }
 }
 
 #pragma mark - Claude status line
@@ -164,9 +138,7 @@ static NSString *RemoveStatusLineBlock(NSString *text) {
     NSString *block = [NSString stringWithFormat:@"(?:\\A|\\n)%@\\n[\\s\\S]*?\\n%@(?=\\n|\\z)",
         [NSRegularExpression escapedPatternForString:CCPetsStatusLineStartMarker],
         [NSRegularExpression escapedPatternForString:CCPetsStatusLineEndMarker]];
-    text = ReplacePattern(text, block, @"");
-    text = ReplacePattern(text, @"\\A\\n+", @"");
-    return ReplacePattern(text, @"\\n{3,}", @"\n\n");
+    return ReplacePattern(text, block, @"");
 }
 
 // prelude 把 Claude 喂给 status line 的 JSON 先存一份，交给 cc-pets --claude-usage 记录额度，
@@ -188,8 +160,7 @@ static NSString *StatusLinePrelude(NSString *binary) {
 }
 
 // 返回是否插入成功；hadShebang 记录原脚本有没有 shebang，决定能不能去掉 command 里的解释器前缀。
-static BOOL InstallStatusLinePrelude(NSString *scriptPath, NSString *binary, BOOL createIfMissing, BOOL *hadShebang) {
-    *hadShebang = NO;
+static BOOL InstallStatusLinePrelude(NSString *scriptPath, NSString *binary, BOOL createIfMissing) {
     NSString *original = nil;
     mode_t mode = 0700;
     struct stat info;
@@ -217,11 +188,8 @@ static BOOL InstallStatusLinePrelude(NSString *scriptPath, NSString *binary, BOO
         body = newline.location == NSNotFound ? @"" : [cleaned substringFromIndex:newline.location + 1];
     }
     NSString *updated = [NSString stringWithFormat:@"%@\n%@\n%@", shebang, StatusLinePrelude(binary), body];
-    // 结尾的换行收成恰好一个。不能用 \n*\z 全局替换：它在末尾还会再匹配一次空串，多出一行。
-    while ([updated hasSuffix:@"\n"]) updated = [updated substringToIndex:updated.length - 1];
-    updated = [updated stringByAppendingString:@"\n"];
-    if (!CCPetsWriteFileAtomically(scriptPath, updated, mode | 0100, NULL)) return NO;
-    *hadShebang = hasShebang;
+    if (![updated isEqual:original] && !CCPetsWriteFileAtomically(scriptPath, updated, mode | 0100, NULL)) return NO;
+    if ([updated isEqual:original] && !(mode & 0100) && chmod(scriptPath.fileSystemRepresentation, mode | 0100) != 0) return NO;
     return YES;
 }
 
@@ -279,7 +247,7 @@ int InstallClaudeHooksAtHome(NSString *binary, NSString *claudeHome) {
     NSString *command = [NSString stringWithFormat:@"%@ CC_PETS_PROFILE_ID=%@ CC_PETS_PROFILE_NAME=%@ CC_PETS_PROFILE_HOME=%@ %@ --hook",
         CCPetsClaudeHookMarker, CCPetsShellQuote(profileID), CCPetsShellQuote(profileName),
         CCPetsShellQuote(claudeHome), CCPetsShellQuote(binary)];
-    ReplaceManagedHooks(config, @[@[CCPetsClaudeHookMarker, @"cc-pets"], @[CCPetsLegacyClaudeHookMarker, @"codex-pet"]], command, @[
+    ReconcilePetHooks(config, @[@[CCPetsClaudeHookMarker, @"cc-pets"], @[CCPetsLegacyClaudeHookMarker, @"codex-pet"]], command, @[
         @"SessionStart", @"UserPromptSubmit", @"PreToolUse", @"PermissionRequest", @"PostToolUse",
         @"PostToolUseFailure", @"Notification", @"SubagentStart", @"SubagentStop", @"TaskCreated",
         @"TaskCompleted", @"Stop", @"StopFailure", @"SessionEnd"
@@ -310,17 +278,8 @@ int InstallClaudeHooksAtHome(NSString *binary, NSString *claudeHome) {
     config[@"statusLine"] = statusLine;
 
     NSDictionary<NSString *, id> *parsed = CCPetsParseStatusLineCommand(originalCommand);
-    BOOL hadShebang = NO;
     BOOL statusLineInstalled = parsed &&
-        InstallStatusLinePrelude(parsed[@"script"], binary, createdStatusLine, &hadShebang);
-
-    // 只在原命令带解释器前缀（`bash ~/x.sh`）时才改写 command，去掉那层前缀让 agent 能直接读懂。
-    // 纯路径形态——包括官方默认的 `~/.claude/statusline.sh`——一个字都不动。另外两道闸门都是为了
-    // 不改变脚本的执行语义：带 flag（`sh -e ~/x.sh`）不动，否则 -e 会被悄悄丢掉；原脚本没有
-    // shebang 的不动，否则 prelude 补上的 #!/bin/zsh 会把本来用 bash 跑的脚本换成 zsh。
-    if (statusLineInstalled && [parsed[@"interpreter"] boolValue] && ![parsed[@"flags"] boolValue] && hadShebang) {
-        statusLine[@"command"] = parsed[@"target"];
-    }
+        InstallStatusLinePrelude(parsed[@"script"], binary, createdStatusLine);
 
     // 解析不出脚本路径的命令（`bun x ccstatusline`、`npx …`、带管道或 `sh -c` 的命令行）没法就地插
     // prelude，而 status line 是 Claude 额度的唯一来源。回退到包装器：command 换成
@@ -345,8 +304,7 @@ int InstallClaudeHooksAtHome(NSString *binary, NSString *claudeHome) {
         CCPetsPrintLine(stderr, L(@"Claude hooks still work, but the pet can't show Claude quota % (token usage is unaffected)."));
     }
 
-    NSString *text = [CCPetsJSONStringify(config) stringByAppendingString:@"\n"];
-    if (!CCPetsWriteFileAtomically(settingsPath, text, 0600, &errorMessage)) {
+    if (!CCPetsWriteChangedConfig(settingsPath, config, 0600, &errorMessage)) {
         CCPetsPrintLine(stderr, errorMessage);
         return 1;
     }
@@ -390,13 +348,12 @@ int InstallCodexHooksAtHome(NSString *binary, NSString *codexHome) {
     NSString *command = [NSString stringWithFormat:@"%@ CC_PETS_PROFILE_ID=%@ CC_PETS_PROFILE_NAME=%@ CC_PETS_PROFILE_HOME=%@ %@ --hook",
         CCPetsCodexHookMarker, CCPetsShellQuote(profileID), CCPetsShellQuote(profileName),
         CCPetsShellQuote(codexHome), CCPetsShellQuote(binary)];
-    ReplaceManagedHooks(config, @[@[CCPetsCodexHookMarker, @"cc-pets"], @[CCPetsLegacyCodexHookMarker, @"codex-pet"]], command, @[
+    ReconcilePetHooks(config, @[@[CCPetsCodexHookMarker, @"cc-pets"], @[CCPetsLegacyCodexHookMarker, @"codex-pet"]], command, @[
         @"SessionStart", @"UserPromptSubmit", @"PreToolUse", @"PermissionRequest", @"PostToolUse",
         @"SubagentStart", @"SubagentStop", @"Stop", @"SessionEnd"
     ]);
 
-    NSString *text = [CCPetsJSONStringify(config) stringByAppendingString:@"\n"];
-    if (!CCPetsWriteFileAtomically(hooksPath, text, 0600, &errorMessage)) {
+    if (!CCPetsWriteChangedConfig(hooksPath, config, 0600, &errorMessage)) {
         CCPetsPrintLine(stderr, errorMessage);
         return 1;
     }
@@ -421,7 +378,7 @@ NSString *const CCPetsShimEndMarker = @"# <<< cc-pets-shims <<<";
 
 // 去掉脚本里的 prelude。脚本本来就是安装器新建的（去掉之后只剩创建标记），直接删掉并通过
 // created 告诉调用方，status line 配置也要一起删。返回脚本是否有变化。
-static BOOL RemoveStatusLinePrelude(NSString *scriptPath, BOOL *created) {
+static BOOL RemoveStatusLinePrelude(NSString *scriptPath, BOOL keepScript, BOOL *created) {
     *created = NO;
     struct stat info;
     if (scriptPath.length == 0 || stat(scriptPath.fileSystemRepresentation, &info) != 0 || !S_ISREG(info.st_mode)) return NO;
@@ -429,13 +386,11 @@ static BOOL RemoveStatusLinePrelude(NSString *scriptPath, BOOL *created) {
     NSString *original = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
     if (!original) return NO;
     NSString *updated = RemoveStatusLineBlock(original);
-    while ([updated hasSuffix:@"\n"]) updated = [updated substringToIndex:updated.length - 1];
-    updated = [updated stringByAppendingString:@"\n"];
     if ([updated isEqualToString:original]) return NO;
     if ([updated isEqualToString:[NSString stringWithFormat:@"#!/bin/zsh\n%@\n", CCPetsCreatedStatusLineMarker]]) {
-        unlink(scriptPath.fileSystemRepresentation);
-        *created = YES;
-        return YES;
+        if (keepScript) return CCPetsWriteFileAtomically(scriptPath, @"#!/bin/zsh\n", info.st_mode & 07777, NULL);
+        *created = unlink(scriptPath.fileSystemRepresentation) == 0;
+        return *created;
     }
     return CCPetsWriteFileAtomically(scriptPath, updated, info.st_mode & 07777, NULL);
 }
@@ -453,8 +408,7 @@ static BOOL UpdateConfig(NSString *path, BOOL *failed, BOOL (^updater)(CCPetsJSO
         return NO;
     }
     if (![config isKindOfClass:CCPetsJSONObject.class] || !updater(config)) return NO;
-    NSString *text = [CCPetsJSONStringify(config) stringByAppendingString:@"\n"];
-    if (!CCPetsWriteFileAtomically(path, text, 0600, &errorMessage)) {
+    if (!CCPetsWriteChangedConfig(path, config, 0600, &errorMessage)) {
         CCPetsPrintLine(stderr, errorMessage);
         *failed = YES;
         return NO;
@@ -471,18 +425,49 @@ static NSString *RemoveMarkedBlock(NSString *text, NSString *startMarker, NSStri
 
 // .zshrc 里的段落。cc-pets-codex / cc-pets-claude 是 alias 时代的写法：alias 区分大小写，挡不住
 // Claude / CODEX，已被 cc-pets-shims 的 PATH shim 取代；安装前的清理也会走这里，顺带迁移掉。
-static BOOL RemoveShellIntegration(NSString *shellRC) {
+static NSString *ShimPathFromLine(NSString *line) {
+    if (![line hasPrefix:@"path=("] || ![line hasSuffix:@" $path)"]) return nil;
+    NSString *literal = [line substringWithRange:NSMakeRange(6, line.length - 6 - @" $path)".length)];
+    NSArray *words = CCPetsHookWords(literal);
+    return words.count == 1 ? words.firstObject : nil;
+}
+
+static BOOL RemoveShellIntegration(NSString *shellRC, BOOL preparingInstall) {
     struct stat info;
     if (shellRC.length == 0 || stat(shellRC.fileSystemRepresentation, &info) != 0) return NO;
     NSData *data = [NSData dataWithContentsOfFile:shellRC];
     NSString *original = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
     if (!original) return NO;
-    NSString *updated = RemoveMarkedBlock(original, CCPetsShimStartMarker, CCPetsShimEndMarker);
+    NSString *updated = original;
+    NSString *shimDir = CCPetsEnvironmentValue(@"CC_PETS_SHIM_DIR") ?: [CCPetsHomeDirectory() stringByAppendingPathComponent:@".cc-pets/shims"];
+    NSMutableArray *kept = [NSMutableArray array];
+    BOOL inBlock = NO;
+    NSArray *lines = [original componentsSeparatedByString:@"\n"];
+    BOOL correctBlock = NO;
+    for (NSString *line in lines) {
+        if ([line isEqual:CCPetsShimStartMarker]) inBlock = YES;
+        if ([line isEqual:CCPetsShimEndMarker]) inBlock = NO;
+        if (inBlock && [ShimPathFromLine(line) isEqual:shimDir]) correctBlock = YES;
+    }
+    inBlock = NO;
+    for (NSString *line in lines) {
+        if ([line isEqual:CCPetsShimStartMarker]) {
+            inBlock = YES;
+            if (!preparingInstall || !correctBlock) continue;
+        } else if ([line isEqual:CCPetsShimEndMarker]) {
+            inBlock = NO;
+            if (!preparingInstall || !correctBlock) continue;
+        }
+        NSString *target = ShimPathFromLine(line);
+        if (inBlock && (!preparingInstall || !correctBlock) && ([line isEqual:@"typeset -U path"] || target)) continue;
+        if (!preparingInstall && [target isEqual:shimDir]) continue;
+        [kept addObject:line];
+    }
+    updated = [kept componentsJoinedByString:@"\n"];
     for (NSString *name in @[@"cc-pets-codex", @"cc-pets-claude", @"codex-pet", @"claude-pet"]) {
         updated = RemoveMarkedBlock(updated, [NSString stringWithFormat:@"# >>> %@ >>>", name],
             [NSString stringWithFormat:@"# <<< %@ <<<", name]);
     }
-    updated = ReplacePattern(updated, @"\\n{3,}", @"\n\n");
     if ([updated isEqualToString:original]) return NO;
     return CCPetsWriteFileAtomically(shellRC, updated, info.st_mode & 07777, NULL);
 }
@@ -513,7 +498,7 @@ static BOOL RemoveCodexHooksAtHome(NSString *codexHome, BOOL preparingInstall, B
         : @[@[CCPetsCodexHookMarker, @"cc-pets"], @[CCPetsLegacyCodexHookMarker, @"codex-pet"]];
     NSString *path = [codexHome stringByAppendingPathComponent:@"hooks.json"];
     return UpdateConfig(path, failed, ^BOOL(CCPetsJSONObject *config) {
-        return RemoveManagedHooks(config, signatures, YES);
+        return ReconcilePetHooks(config, signatures, nil, @[]);
     });
 }
 
@@ -525,7 +510,7 @@ static BOOL RemoveClaudeHooksAtHome(NSString *claudeHome, BOOL preparingInstall,
         ? @[CCPetsLegacyStatusLineMarker] : @[CCPetsStatusLineMarker, CCPetsLegacyStatusLineMarker];
     NSString *path = [claudeHome stringByAppendingPathComponent:@"settings.json"];
     return UpdateConfig(path, failed, ^BOOL(CCPetsJSONObject *config) {
-        BOOL changed = RemoveManagedHooks(config, signatures, YES);
+        BOOL changed = ReconcilePetHooks(config, signatures, nil, @[]);
         CCPetsJSONObject *statusLine = config[@"statusLine"];
         BOOL isObject = [statusLine isKindOfClass:CCPetsJSONObject.class];
         NSString *command = isObject && [statusLine[@"command"] isKindOfClass:NSString.class] ? statusLine[@"command"] : @"";
@@ -547,8 +532,13 @@ static BOOL RemoveClaudeHooksAtHome(NSString *claudeHome, BOOL preparingInstall,
             CCPetsJSONObject *current = config[@"statusLine"];
             id currentCommand = [current isKindOfClass:CCPetsJSONObject.class] ? current[@"command"] : nil;
             BOOL created = NO;
-            if (RemoveStatusLinePrelude(CCPetsParseStatusLineCommand(currentCommand)[@"script"], &created)) changed = YES;
-            if (created) [config removeObjectForKey:@"statusLine"];
+            BOOL keepScript = isObject && current.keys.count > 2;
+            if (RemoveStatusLinePrelude(CCPetsParseStatusLineCommand(currentCommand)[@"script"], keepScript, &created)) changed = YES;
+            if (created) {
+                [current removeObjectForKey:@"type"];
+                [current removeObjectForKey:@"command"];
+                if (!current.keys.count) [config removeObjectForKey:@"statusLine"];
+            }
         }
         return changed;
     });
@@ -624,7 +614,7 @@ int UninstallIntegrations(BOOL preparingInstall, NSString *shellRC) {
         }
     }
 
-    BOOL shellChanged = RemoveShellIntegration(shellRC);
+    BOOL shellChanged = RemoveShellIntegration(shellRC, preparingInstall);
     // shim 只在真正卸载时删：安装前删掉的话，重建失败就会留下一个没有 codex / claude 的 PATH 目录。
     BOOL shimChanged = !preparingInstall && RemoveShims();
 
@@ -683,8 +673,10 @@ int ConfigureUpdater(void) {
     configuration[@"npmCliPath"] = npmCliPath;
     configuration[@"appPath"] = [applicationsDirectory stringByAppendingPathComponent:@"CC Pets.app"];
     NSString *error = nil;
-    if (!CCPetsWriteFileAtomically([supportDirectory stringByAppendingPathComponent:@"updater.json"],
-            [CCPetsJSONStringify(configuration) stringByAppendingString:@"\n"], 0600, &error)) {
+    NSString *file = [supportDirectory stringByAppendingPathComponent:@"updater.json"];
+    NSString *text = [CCPetsJSONStringify(configuration) stringByAppendingString:@"\n"];
+    if ([text isEqual:[NSString stringWithContentsOfFile:file encoding:NSUTF8StringEncoding error:nil]]) return 0;
+    if (!CCPetsWriteFileAtomically(file, text, 0600, &error)) {
         CCPetsPrintLine(stderr, error);
         return 1;
     }

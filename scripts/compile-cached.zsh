@@ -35,7 +35,7 @@ cc_pets_compile() (
       -o) output="$1"; shift ;;
       -framework) link_args+=("$arg" "$1"); shift ;;
       -l*) link_args+=("$arg") ;;
-      *.m) sources+=("$arg"); link_args+=("$arg") ;;
+      *.m|*.c) sources+=("$arg"); link_args+=("$arg") ;;
       *) compile_flags+=("$arg"); link_args+=("$arg") ;;
     esac
   done

@@ -79,21 +79,9 @@
 
 ### 可选：用于 CC Pets 的 CC Bridge
 
-要让多台 Mac 自动发现对方的在线 agent，每台 Mac 各建一个 App，加入同一个频道。在每台电脑的 `~/.cc-pets/bridge-slack.json` 中填入该机 App 的两个令牌、共用频道 ID 和本机名称。例如：
+要让多台 Mac 自动发现对方的在线 agent，每台 Mac 各建一个 App，加入同一个频道。在每台电脑打开 **主菜单 → 桥接 → 远程连接**，填入本机 App 的两个令牌和共用频道 ID，并填写本机名称（如 `mac-a`）。勾选「启用 Slack 连接」，点击「测试连接并保存」，再启用 CC Bridge。令牌保存在 macOS 钥匙串；`~/.cc-pets/bridge-remote.json` 的 `slack` 键保存连接设置和凭据引用。
 
-```json
-{
-  "enabled": true,
-  "app_token": "<本机的 xapp- 令牌>",
-  "bot_token": "<本机的 xoxb- 令牌>",
-  "discovery": {
-    "channel": "<共用频道的 ID>",
-    "name": "mac-a"
-  }
-}
-```
-
-打开支持 Slack 发现的 CC Pets，在桌宠菜单启用 **CC Bridge**。频道里出现 `mac-a` 的在线名单后，到另一台已接入的 Mac，让 agent 执行 `list_agents`。从结果中选一个 `mac-a/会话名`，让 agent 通过 Bridge 发消息并请对方回复 `pong`。看到回复就验证了跨机双向收发。[CC Bridge 使用指南](../CC_BRIDGE.zh-CN.md#slack)
+频道里出现 `mac-a` 的在线名单后，到另一台已接入的 Mac，让 agent 执行 `list_agents`。从结果中选一个 `mac-a/会话名`，让 agent 通过 Bridge 发消息并请对方回复 `pong`。看到回复就验证了跨机双向收发。[CC Bridge 使用指南](../CC_BRIDGE.zh-CN.md#slack)
 
 #### 发送图片和文件
 

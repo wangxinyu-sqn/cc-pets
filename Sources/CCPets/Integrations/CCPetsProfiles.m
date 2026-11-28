@@ -281,6 +281,7 @@ BOOL CCPetsSetProfileNeedsRepair(NSString *profileID, BOOL needsRepair, NSString
     BOOL found = NO;
     for (NSUInteger index = 0; index < profiles.count; index++) {
         if (![profiles[index][@"id"] isEqualToString:profileID]) continue;
+        if ([profiles[index][@"needsRepair"] boolValue] == needsRepair) return YES;
         NSMutableDictionary *updated = [profiles[index] mutableCopy];
         if (needsRepair) updated[@"needsRepair"] = @YES;
         else [updated removeObjectForKey:@"needsRepair"];
@@ -419,12 +420,12 @@ static int UninstallProfileHooks(NSDictionary *profile) {
     return UninstallCodexHooksAtHome(home);
 }
 
-static int AdaptProfile(NSDictionary *profile) {
+static int AdaptProfile(NSDictionary *profile, BOOL includeBridge) {
     CCPetsPrintLine(stdout, @"stage=hooks");
     int status;
     @try {
         status = InstallProfileHooks(profile);
-        if (status == 0 && CCBridgeEnabled()) {
+        if (status == 0 && includeBridge && CCBridgeEnabled()) {
             CCPetsPrintLine(stdout, @"stage=bridge");
             if (!PrintReport(CCBridgeInstallForProfile(profile, CCBridgeOptions(), YES))) status = 1;
         }
@@ -477,18 +478,18 @@ int CCPetsProfileCommandMain(NSArray<NSString *> *arguments) {
             NSDictionary *profile = CCPetsRegisterProfile(provider, home, name, nil, &error);
             if (!profile) { CCPetsPrintLine(stderr, error); return 1; }
             CCPetsPrintLine(stdout, @"stage=registered");
-            return AdaptProfile(profile);
+            return AdaptProfile(profile, YES);
         }
         if ([command isEqualToString:@"repair"]) {
             NSDictionary *profile = CCPetsProfileWithID(ValueAfter(arguments, @"--id"));
             if (!profile) { CCPetsPrintLine(stderr, @"Profile not found."); return 1; }
-            return AdaptProfile(profile);
+            return AdaptProfile(profile, YES);
         }
         if ([command isEqualToString:@"repair-all"]) {
             BOOL failed = NO;
             for (NSDictionary *profile in CCPetsProfiles()) {
                 CCPetsPrintLine(stdout, [NSString stringWithFormat:@"profile=%@", profile[@"displayName"]]);
-                if (AdaptProfile(profile) != 0) failed = YES;
+                if (AdaptProfile(profile, ![arguments containsObject:@"--pet-hooks-only"]) != 0) failed = YES;
             }
             return failed ? 1 : 0;
         }
@@ -505,10 +506,10 @@ int CCPetsProfileCommandMain(NSArray<NSString *> *arguments) {
                 name, profileID, &error);
             if (!profile) { CCPetsPrintLine(stderr, error); return 1; }
             CCPetsPrintLine(stdout, @"stage=registered");
-            int status = AdaptProfile(profile);
+            int status = AdaptProfile(profile, YES);
             if (status != 0) return status;
             if (![oldProfile[@"home"] isEqualToString:profile[@"home"]]) {
-                BOOL bridgeRemoved = PrintReport(CCBridgeUninstallForProfile(oldProfile, CCBridgeShouldTouchMCP()));
+                BOOL bridgeRemoved = PrintReport(CCBridgeUninstallForProfile(oldProfile, CCBridgeShouldTouchMCP(), CCBridgeOptions()));
                 status = UninstallProfileHooks(oldProfile);
                 if (!bridgeRemoved && status == 0) status = 1;
             }
@@ -518,7 +519,7 @@ int CCPetsProfileCommandMain(NSArray<NSString *> *arguments) {
             NSString *profileID = ValueAfter(arguments, @"--id");
             NSDictionary *profile = CCPetsProfileWithID(profileID);
             if (!profile) { CCPetsPrintLine(stderr, @"Profile not found."); return 1; }
-            BOOL bridgeRemoved = PrintReport(CCBridgeUninstallForProfile(profile, CCBridgeShouldTouchMCP()));
+            BOOL bridgeRemoved = PrintReport(CCBridgeUninstallForProfile(profile, CCBridgeShouldTouchMCP(), CCBridgeOptions()));
             int status = UninstallProfileHooks(profile);
             if (status != 0) return status;
             if (!bridgeRemoved) {

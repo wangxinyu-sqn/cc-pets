@@ -19,7 +19,7 @@ cc-pets bridge status     # Show the switch, options, online sessions, and recen
 cc-pets bridge disable    # Remove every CC Bridge integration and turn it off
 ```
 
-You can also toggle everything from the pet's right-click menu under **CC Bridge**; see [Pet menu](#pet-menu).
+You can also toggle everything from **Bridge** in the main window; see [Pet menu](#pet-menu).
 
 After enabling:
 
@@ -33,8 +33,11 @@ After enabling:
   policy is `never`), and Claude Code asks according to your permission settings. Opt in as needed;
   see [Options](#options).
 
-`cc-pets uninstall` also removes CC Bridge integrations. Reinstalls and upgrades rewrite them
-with the saved options when CC Bridge is enabled.
+`cc-pets uninstall` also removes CC Bridge integrations. When Bridge is enabled, reinstalls and upgrades check the existing configuration and update missing or stale entries. Tool approvals saved in Codex Desktop are preserved.
+
+Codex, Claude Code and agy hooks are matched by event, matcher and command. Reinstalling keeps equivalent handlers in place. Disabling Bridge removes its handlers while keeping the pet integration. Claude and agy retain existing grants on refresh. Turning an option off revokes the matching Pet-selected rule and keeps unrelated permissions.
+
+When a Bridge MCP registration has custom fields, Codex and agy retain it using `enabled = false` and `disabled: true`, respectively. For a Claude user-scoped registration, CC Pets saves the customized entry in `.cc-pets-paused-mcp.json` (mode `0600`) in that Claude Home before removing it from the active servers. Enabling Bridge restores it. An unrelated transport registered under the same name is reported as a conflict.
 
 ### Options
 
@@ -52,7 +55,7 @@ cc-pets bridge configure --edit-guard=off       # Turn off the reservation edit 
 
 | Option | Description |
 | --- | --- |
-| `--approve` / `--codex-approve` / `--claude-allow` | Tools that skip approval. Use groups `view` (list sessions, list reservations, read inbox), `send`, `reserve` (reserve / release), `name`, or tool names. Codex gets a marked block at the end of `~/.codex/config.toml`; Claude gets entries in `~/.claude/settings.json` `permissions.allow` (only `mcp__cc-bridge__*` entries are touched). `disable` removes both |
+| `--approve` / `--codex-approve` / `--claude-allow` | Tools that skip approval. Use groups `view` (list sessions, list reservations, read inbox), `send`, `reserve` (reserve / release), `name`, or tool names. Codex gets a marked block at the end of `~/.codex/config.toml`; Claude gets entries in `~/.claude/settings.json` `permissions.allow` (only `mcp__cc-bridge__*` entries are touched). `disable` removes Bridge-managed approvals. If the Codex server has user-defined settings, environment variables or tool permissions, its registration is kept with `enabled = false` |
 | `--agy-allow` | Opt in to skipping approval for Antigravity CLI. Use the same groups or tool names. `--agy-allow=` clears the list. `--approve` applies to Codex and Claude |
 | `--agy-app=on\|off` | Enable the Antigravity App Sidecar in the default Gemini root. Defaults to off |
 | `--tab-title=on\|off` | Append the Bridge nickname to CLI terminal tab titles. Defaults to off |
@@ -61,7 +64,7 @@ cc-pets bridge configure --edit-guard=off       # Turn off the reservation edit 
 
 Claude picks up changes immediately; Codex needs a session restart (and re-trusting in `/hooks` when hooks change).
 
-To enable tab nicknames, right-click the pet and turn on **CC Bridge → Tab nicknames**. Restart the
+To enable tab nicknames, open **Bridge → Bridge Settings → Tab nicknames**. Restart the
 CLI session through the CC Pets shell integration to apply the setting. For example, a tab can show
 `Fix quota polling | cc-pets · robin`.
 
@@ -89,27 +92,11 @@ Run the Socket Mode adapter with the desktop pet or in the foreground to exchang
 
 1. Create a Slack app for Bridge, enable Socket Mode and create an app-level token with `connections:write`. Give the bot `chat:write`. For public channels, add `channels:history` and subscribe to the `message.channels` bot event. For private channels, use `groups:history` and `message.groups`. Install or reinstall the app, then invite both Bridge and the peer bot to the channel. [Slack Socket Mode setup](https://docs.slack.dev/apis/events-api/using-socket-mode/)
 2. Configure the peer to accept mentions from the Bridge bot and reply in the same thread using `thread_ts`. Record the channel ID and the **peer's** bot ID and bot user ID. The bot ID identifies incoming messages and the user ID addresses mentions. The peer app owner can find both IDs in the bot's `auth.test` response. [Bot message events](https://docs.slack.dev/reference/events/message/bot_message/) · [auth.test](https://docs.slack.dev/reference/methods/auth.test/)
-3. Save the following as `~/.cc-pets/bridge-slack.json`, replacing the example IDs. Add one entry per agent, with a unique name and channel/bot pair.
+3. Open **Main menu → Bridge → Remote Connections**. Enter the local Slack app’s App-Level Token and Bot Token. Enter the shared channel ID and a name for this Mac. **Test connection and save** verifies the bot identity, channel read access and Socket Mode handshake before saving. Enable the Slack connection and Bridge when ready.
 
-```json
-{
-  "enabled": true,
-  "app_token": "xapp-…",
-  "bot_token": "xoxb-…",
-  "agents": [
-    {
-      "name": "slack-reviewer",
-      "channel": "C0123456789",
-      "bot_id": "B0123456789",
-      "user_id": "U0123456789"
-    }
-  ]
-}
-```
+The form explains Keychain access when you test and save. The tokens are stored as two items in your macOS keychain. Replacing a token updates the same item and preserves its access controls. Background connections read silently. When permission is needed, click **Test connection and save** in Remote Connections. **Always Allow** normally permits future reads of that item by the same app. The desktop app reloads saved changes. Disabling Slack keeps the credentials for next time. After upgrading from the beta that used `bridge-slack.json`, configure the connection again.
 
-Fill in both tokens from this Mac’s Slack app in the default JSON, enable **CC Bridge** in the pet’s menu, and open an updated CC Pets app. It starts the adapter automatically, reloads saved changes and stops its own adapter when you set `"enabled": false`, disable Bridge or quit the pet. Omitting `enabled` leaves automatic startup off. The JSON stores tokens in plain text locally. The reader restricts token files to owner read/write permissions (`0600`).
-
-For foreground operation, run `cc-pets bridge slack [config.json]`. The CLI prefers each token from JSON, falling back to `SLACK_APP_TOKEN` or `SLACK_BOT_TOKEN` individually. The pet and the foreground command share a single-instance lock. When using a source checkout, launch its updated app and load the matching hooks and MCP in your agent sessions.
+Run `cc-pets bridge slack [config.json]` for foreground operation. The CLI can use the same keychain credentials. Set `SLACK_APP_TOKEN` or `SLACK_BOT_TOKEN` to override the corresponding token for that invocation. Foreground and desktop adapters share a single-instance lock.
 
 - **From a local session**. Find the peer with `list_agents`, then start a thread with `send_message(to="slack-reviewer", message="Please review the API change")`. The configured channel receives the local session name, ref and message body. Recent delivery receipts appear in `cc-pets bridge status`.
 - **From Slack**. Have the configured bot post a new channel message such as `@CCBridge to codex-main Please review the API change`. In an API payload, use the Bridge bot's user mention (`<@U…>`). The recipient must be an online local session.
@@ -117,27 +104,26 @@ For foreground operation, run `cc-pets bridge slack [config.json]`. The CLI pref
 
 #### Discover computers through a Slack channel
 
-Use one Slack app and Bridge adapter per Mac and invite the apps to the same private channel in one workspace. The channel is the discovery boundary. Set its ID in each Mac’s `~/.cc-pets/bridge-slack.json`. Optionally set the local computer’s address prefix, for example:
+Use one Slack app and Bridge adapter per Mac and invite the apps to the same private channel in one workspace. The channel is the discovery boundary. Enter the channel ID on each Mac under **Remote Connections**, along with a name for that computer. Settings are saved in `~/.cc-pets/bridge-remote.json` under the `slack` key. Before credentials are saved, the configuration looks like this:
 
 ```json
 {
-  "enabled": true,
-  "app_token": "xapp-…",
-  "bot_token": "xoxb-…",
-  "discovery": {
-    "channel": "C0123456789",
-    "name": "UniverseWang"
+  "slack": {
+    "enabled": false,
+    "discovery": { "channel": "C0123456789", "name": "UniverseWang" },
+    "app_token": "",
+    "bot_token": ""
   }
 }
 ```
 
-Replace the example channel ID. Computer names accept uppercase and lowercase letters, digits, dots, underscores and hyphens. Omitting `name` derives the prefix from the Slack bot username. Fill in each app’s own tokens, open the pet and enable Bridge. Each adapter registers in the channel and advertises its local online sessions.
+After saving credentials, both token fields hold `keychain:` references. Replace the example channel ID. Computer names accept uppercase and lowercase letters, digits, dots, underscores and hyphens. Omitting `name` derives the prefix from the Slack bot username. Save each app’s own credentials in Remote Connections and enable the connection. Each adapter registers in the channel and advertises its local online sessions.
 
 - **Add another Mac** by inviting its app to the channel and starting its adapter with the same channel ID. Existing discovery-enabled Macs pick up the newcomer without a config change, restart or exchange of bot and member IDs.
 - **List and send** with `list_agents` or `cc-pets bridge list`. The listing includes the provider and busy/idle state. Send to `UniverseWang/reviewer` from another computer and to `reviewer` locally. Reply to the full address in an incoming message to continue its thread. A delivery receipt is confirmed when the remote Bridge accepts the message.
 - **Presence** checks for changes about every five seconds, renews every 30 seconds and expires after 90 seconds. Each computer advertises its own session names, routing identifiers, providers and busy/idle states.
 - **Membership** allows participating Bridge bots in the discovery channel to see each other’s sessions and send messages. Use a channel shared by the collaborating machines. Ordinary chat messages do not register a bot.
-- **Existing configurations** can keep `agents`, with or without `discovery`. Ordinary bots use explicit entries; existing `"bridge": true` entries keep their configured aliases. When first enabling channel discovery, update and restart each existing adapter once.
+- **Explicit peers** can use `slack.agents`, with or without `discovery`. Configure named bots in JSON using `name`, `channel`, `bot_id` and `user_id`. Entries with `"bridge": true` use their configured aliases.
 
 After the Slack handshake, 30 seconds without an incoming message triggers a WebSocket ping. If the probe fails or ten seconds pass without a pong, the adapter reconnects. Waking the Mac from system sleep closes the old connection and obtains a fresh Socket Mode URL. This applies to both desktop-managed and foreground adapters.
 
@@ -355,7 +341,7 @@ menu marks messages as seen. The menu and badge show names and times only, never
 
 ## Pet menu
 
-Right-click the pet → **CC Bridge**:
+Open **Bridge** in the main window or run `cc-pets open bridge`.
 
 | Switch | Effect |
 | --- | --- |
@@ -366,9 +352,7 @@ Right-click the pet → **CC Bridge**:
 | 桌宠提醒 (Pet alerts) › 消息角标 (Message badge) | Pet only: show the message badge on the status icon |
 | 桌宠提醒 (Pet alerts) › 新消息通知 (New-message notifications) | Pet only: a system notification when sessions message each other (sender and recipient only, never the body); asks for notification permission the first time |
 
-The pet's UI is currently in Simplified Chinese. "N 会话 · M 预留" (online sessions and active
-reservations) appears under 启用, and each switch has a hover tooltip. While CC Bridge is off the menu
-shows only 启用; reopen the menu after enabling to see the other switches. The menu finds the command-line
+The header shows online sessions and active file reservations. Message Activity shows recent deliveries and pending messages. Bridge Settings contains the switches above. Remote Connections lets you configure Slack even while Bridge is off. The page finds the command-line
 tool through `~/.cc-pets/bridge-cli.json`, written on every `cc-pets install`; if it's missing, you'll be asked to reinstall.
 
 ## Security and privacy

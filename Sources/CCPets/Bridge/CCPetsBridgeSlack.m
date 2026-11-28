@@ -1,4 +1,5 @@
 #import "CCPetsBridgeSlack.h"
+#import "CCPetsSlackConfiguration.h"
 #import "CCPetsBridgeSlackFiles.h"
 #import "CCPetsBridgeAttachments.h"
 #import "CCPetsBridge.h"
@@ -7,11 +8,11 @@
 #import "CCPetsBridgeStore.h"
 #import "CCPetsCLISupport.h"
 #import "CCPetsL10n.h"
+#import <Security/Security.h>
 #import <IOKit/IOMessage.h>
 #import <IOKit/pwr_mgt/IOPMLib.h>
 #import <unistd.h>
 #import <fcntl.h>
-#import <sys/stat.h>
 #import <sys/file.h>
 #import <errno.h>
 
@@ -31,6 +32,33 @@ static void Report(NSString *message) {
     CCPetsPrintLine(stderr, [@"cc-bridge Slack: " stringByAppendingString:message]);
 }
 
+static void SetSlackStatus(NSString *state, NSString *detail) {
+    @try {
+        CCBridgeWriteJSON([CCBridgeStateDirectory() stringByAppendingPathComponent:@"slack-status.json"],
+            @{@"state": state, @"pid": @(getpid()), @"detail": detail ?: @""});
+    } @catch (NSException *exception) { Report(exception.reason); }
+}
+
+NSString *CCBridgeSlackConnectionDescription(void) {
+    NSDictionary *record = Object(CCBridgeReadJSON([CCBridgeStateDirectory() stringByAppendingPathComponent:@"slack-status.json"]));
+    BOOL running = CCBridgeSlackAdapterRunning();
+    if ([record[@"state"] isEqual:@"error"]) return record[@"detail"];
+    if (!running) return L(@"Waiting to connect");
+    NSString *owner = [NSString stringWithContentsOfFile:[CCBridgeStateDirectory() stringByAppendingPathComponent:@"locks/slack-adapter.pid"]
+        encoding:NSUTF8StringEncoding error:nil];
+    if (owner.intValue == [record[@"pid"] intValue]) {
+        if ([record[@"state"] isEqual:@"connected"]) return [record[@"detail"] length] ? record[@"detail"] : L(@"Connected");
+        if ([record[@"state"] isEqual:@"reconnecting"]) return L(@"Reconnecting…");
+    }
+    return L(@"Connecting…");
+}
+
+static int SlackStartupError(NSString *reason) {
+    SetSlackStatus(@"error", reason);
+    Report(reason);
+    return 1;
+}
+
 // Use form encoding for token-only methods and JSON for chat.postMessage. Never log
 // request headers, message bodies or the signed WebSocket URL on failure.
 NSDictionary *CCBridgeSlackAPI(NSURLSession *http, NSString *method, NSString *token, NSDictionary *body) {
@@ -39,7 +67,8 @@ NSDictionary *CCBridgeSlackAPI(NSURLSession *http, NSString *method, NSString *t
     request.HTTPMethod = @"POST";
     request.timeoutInterval = 20;
     [request setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
-    BOOL form = [method isEqual:@"files.getUploadURLExternal"] || [method isEqual:@"files.info"];
+    BOOL get = [method isEqual:@"files.info"] || [method isEqual:@"conversations.history"];
+    BOOL form = [method isEqual:@"files.getUploadURLExternal"] || get;
     if (form) {
         NSMutableArray *items = [NSMutableArray array];
         for (NSString *key in body) {
@@ -48,7 +77,7 @@ NSDictionary *CCBridgeSlackAPI(NSURLSession *http, NSString *method, NSString *t
         NSURLComponents *parts = [NSURLComponents new];
         parts.queryItems = items;
         NSString *encoded = [parts.percentEncodedQuery stringByReplacingOccurrencesOfString:@"+" withString:@"%2B"];
-        if ([method isEqual:@"files.info"]) {
+        if (get) {
             request.HTTPMethod = @"GET";
             NSURLComponents *endpoint = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
             endpoint.percentEncodedQuery = encoded;
@@ -97,62 +126,6 @@ static NSString *SlackRosterRow(NSDictionary *session) {
         provider = [provider stringByAppendingFormat:@" (%@)", account];
     }
     return [NSString stringWithFormat:@"%@  ·  %@  ·  %@", parts[2], provider, parts[1]];
-}
-
-// One configured peer per (channel, bot). Refuse ambiguous addresses at startup.
-static NSDictionary *ReadSlackConfig(NSString *path, NSString **error) {
-    int fd = open(path.fileSystemRepresentation, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-    if (fd < 0) return nil;
-    NSFileHandle *file = [[NSFileHandle alloc] initWithFileDescriptor:fd closeOnDealloc:YES];
-    NSDictionary *config;
-    @try {
-        struct stat st;
-        if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) return nil;
-        config = Parse([file readDataToEndOfFileAndReturnError:nil]);
-        if (config[@"app_token"] || config[@"bot_token"]) {
-            // Check and restrict the actual file read, even if an editor swaps
-            // the pathname concurrently. Keep permission changes off legacy files.
-            if (st.st_uid != getuid() || ((st.st_mode & 0777) != 0600 && fchmod(fd, 0600) != 0)) {
-                if (error) *error = L(@"Slack token configuration must be owned by you and allow mode 0600.");
-                return nil;
-            }
-            for (NSString *key in @[@"app_token", @"bot_token"]) {
-                if (config[key] && ![config[key] isKindOfClass:NSString.class]) return nil;
-            }
-        }
-    } @finally { [file closeAndReturnError:nil]; }
-    if (config[@"enabled"] && CFGetTypeID((__bridge CFTypeRef)config[@"enabled"]) != CFBooleanGetTypeID()) return nil;
-    NSArray *agents = config[@"agents"];
-    NSDictionary *discovery = Object(config[@"discovery"]);
-    if (config[@"discovery"] && (!discovery || !Matches(discovery[@"channel"], @"^[CG][A-Z0-9]+\\z") ||
-        (discovery[@"name"] && !Matches(discovery[@"name"], @"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}\\z")))) return nil;
-    if (agents && ![agents isKindOfClass:NSArray.class]) return nil;
-    if (!discovery && !agents.count) return nil;
-    NSMutableSet *names = [NSMutableSet set], *endpoints = [NSMutableSet set];
-    for (id item in agents) {
-        NSDictionary *agent = Object(item);
-        NSString *name = agent[@"name"], *bot = agent[@"bot_id"], *user = agent[@"user_id"], *channel = agent[@"channel"];
-        if (agent[@"bridge"] && CFGetTypeID((__bridge CFTypeRef)agent[@"bridge"]) != CFBooleanGetTypeID()) return nil;
-        if (![name isKindOfClass:NSString.class] || ![CCBridgeNormalizeSessionName(name) isEqual:name] || !Matches(bot, @"^B[A-Z0-9]+\\z") ||
-            !Matches(user, @"^[UW][A-Z0-9]+\\z") || !Matches(channel, @"^[CG][A-Z0-9]+\\z")) return nil;
-        NSString *endpoint = ChannelBot(channel, bot);
-        if ([names containsObject:name] || [endpoints containsObject:endpoint]) return nil;
-        [names addObject:name];
-        [endpoints addObject:endpoint];
-    }
-    return config;
-}
-
-NSString *CCBridgeSlackConfigPath(void) {
-    return [CCBridgeHomeDirectory() stringByAppendingPathComponent:@"bridge-slack.json"];
-}
-
-BOOL CCBridgeSlackAutoStartEnabled(void) {
-    NSString *error = nil;
-    NSDictionary *config = ReadSlackConfig(CCBridgeSlackConfigPath(), &error);
-    if (error) Report(error);
-    return [config[@"enabled"] isEqual:@YES] && [config[@"app_token"] hasPrefix:@"xapp-"] &&
-        [config[@"bot_token"] hasPrefix:@"xoxb-"];
 }
 
 BOOL CCBridgeSlackAdapterRunning(void) {
@@ -293,6 +266,46 @@ static NSURLSessionWebSocketMessage *ReceiveSlackFrame(NSURLSessionWebSocketTask
         PingSlackSocket(socket);
     }
     return frame;
+}
+
+static BOOL ValidBotIdentity(NSDictionary *auth) {
+    return [auth[@"ok"] isEqual:@YES] && Matches(auth[@"team_id"], @"^T[A-Z0-9]+\\z") &&
+        Matches(auth[@"user_id"], @"^[UW][A-Z0-9]+\\z") && Matches(auth[@"bot_id"], @"^B[A-Z0-9]+\\z");
+}
+
+NSDictionary<NSString *, NSString *> *CCBridgeSlackTestConnection(NSURLSession *http, NSDictionary *original,
+    NSString *appToken, NSString *botToken, NSString *channel) {
+    NSError *error = nil;
+    if (!botToken.length) botToken = CCBridgeSlackReadToken(CCBridgeSlackConfigPath(), original, @"bot_token", &error);
+    if (!botToken.length) return @{@"bot_token": error.localizedDescription ?: L(@"Enter the token again.")};
+    if (!appToken.length) appToken = CCBridgeSlackReadToken(CCBridgeSlackConfigPath(), original, @"app_token", &error);
+    if (!appToken.length) return @{@"app_token": error.localizedDescription ?: L(@"Enter the token again.")};
+
+    NSDictionary *auth = CCBridgeSlackAPI(http, @"auth.test", botToken, nil);
+    if (!ValidBotIdentity(auth)) return @{@"bot_token": auth[@"error"] ?: L(@"Invalid bot identity.")};
+
+    // Check membership using the existing history scope and a time range before Slack existed.
+    NSDictionary *access = CCBridgeSlackAPI(http, @"conversations.history", botToken,
+        @{@"channel": channel, @"limit": @1, @"latest": @"1.000000"});
+    if (![access[@"ok"] isEqual:@YES]) {
+        NSString *reason = access[@"error"] ?: @"invalid_response";
+        if ([@[@"channel_not_found", @"not_in_channel", @"no_permission"] containsObject:reason])
+            reason = L(@"Check the channel ID and invite the bot to that channel.");
+        else if ([reason isEqual:@"missing_scope"])
+            reason = L(@"Grant channels:history for public channels or groups:history for private channels.");
+        return @{@"channel": reason};
+    }
+    NSDictionary *open = CCBridgeSlackAPI(http, @"apps.connections.open", appToken, nil);
+    NSURL *url = [open[@"url"] isKindOfClass:NSString.class] ? [NSURL URLWithString:open[@"url"]] : nil;
+    if (![open[@"ok"] isEqual:@YES] || ![url.scheme isEqual:@"wss"] || !url.host.length)
+        return @{@"app_token": open[@"error"] ?: @"invalid_socket_url"};
+    NSURLSessionWebSocketTask *socket = [http webSocketTaskWithURL:url];
+    [socket resume];
+    NSURLSessionWebSocketMessage *frame = ReceiveSlackFrame(socket, NO);
+    [socket cancelWithCloseCode:NSURLSessionWebSocketCloseCodeNormalClosure reason:nil];
+    NSData *data = frame.type == NSURLSessionWebSocketMessageTypeData ? frame.data : [frame.string dataUsingEncoding:NSUTF8StringEncoding];
+    if (![Parse(data)[@"type"] isEqual:@"hello"]) return @{@"app_token": L(@"Slack did not complete the Socket Mode handshake.")};
+    return nil;
 }
 
 @implementation CCBridgeSlackAdapter
@@ -445,11 +458,22 @@ static NSURLSessionWebSocketMessage *ReceiveSlackFrame(NSURLSessionWebSocketTask
         if (last[@"ts"] && !newListener) post[@"ts"] = last[@"ts"];
         NSDictionary *reply = CCBridgeSlackAPI(self.http, post[@"ts"] ? @"chat.update" : @"chat.postMessage", self.botToken, post);
         if ([reply[@"ok"] isEqual:@YES] && [reply[@"ts"] isKindOfClass:NSString.class]) {
+            if (broadcast) {
+                @synchronized (self) {
+                    if ([self.connectionID isEqual:connection]) SetSlackStatus(@"connected", nil);
+                }
+            }
             self.publications[sid] = @{@"ts": reply[@"ts"], @"at": @(now), @"connection": connection,
                 @"roster": roster, @"other": other};
         } else {
             if ([@[@"message_not_found", @"edit_window_closed", @"cant_update_message"] containsObject:reply[@"error"] ?: @""]) {
                 [self.publications removeObjectForKey:sid];
+            }
+            if (broadcast) {
+                @synchronized (self) {
+                    if ([self.connectionID isEqual:connection]) SetSlackStatus(@"connected",
+                        [NSString stringWithFormat:L(@"Discovery channel: %@"), reply[@"error"] ?: @"invalid_response"]);
+                }
             }
             self.nextDirectoryCheck = now + 1000LL * MAX(10, [reply[@"delay"] longLongValue]);
             Report(reply[@"error"] ?: @"invalid_response");
@@ -778,6 +802,7 @@ static NSURLSessionWebSocketMessage *ReceiveSlackFrame(NSURLSessionWebSocketTask
                                 self.connectionID = NSUUID.UUID.UUIDString;
                             }
                             backoff = 1;
+                            SetSlackStatus(@"connected", nil);
                             Report(L(@"Socket Mode connected."));
                         }
                         NSString *eid = envelope[@"envelope_id"];
@@ -802,6 +827,7 @@ static NSURLSessionWebSocketMessage *ReceiveSlackFrame(NSURLSessionWebSocketTask
             } else {
                 Report(open[@"error"] ?: @"invalid_socket_url");
             }
+            SetSlackStatus(@"reconnecting", nil);
             sleep((unsigned int)MAX(backoff, [open[@"delay"] unsignedIntegerValue]));
             backoff = MIN(60, backoff * 2);
         }
@@ -809,17 +835,26 @@ static NSURLSessionWebSocketMessage *ReceiveSlackFrame(NSURLSessionWebSocketTask
 }
 @end
 
+// This is the dedicated adapter process. File-based macOS keychain items use legacy ACLs;
+// turn off interactive authorization for this process before its first keychain operation.
+static BOOL DisableAdapterKeychainUI(void) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    OSStatus status = SecKeychainSetUserInteractionAllowed(false);
+#pragma clang diagnostic pop
+    return status == errSecSuccess;
+}
+
 int CCBridgeRunSlack(NSArray<NSString *> *arguments) {
     if (arguments.count > 1 || [arguments.firstObject isEqual:@"--help"]) {
-        CCPetsPrintLine(stderr, L(@"Usage: cc-pets bridge slack [config.json] (tokens in JSON or SLACK_APP_TOKEN and SLACK_BOT_TOKEN)"));
+        CCPetsPrintLine(stderr, L(@"Usage: cc-pets bridge slack [config.json] (tokens in Keychain or SLACK_APP_TOKEN and SLACK_BOT_TOKEN)"));
         return arguments.count > 1 ? 2 : 0;
     }
     if (!CCBridgeEnabled()) { Report(L(@"CC Bridge is off. Run cc-pets bridge enable first.")); return 1; }
     BOOL managed = [arguments.firstObject isEqual:@"--managed"];
     NSString *path = managed ? CCBridgeSlackConfigPath() : (arguments.firstObject ?: CCBridgeSlackConfigPath());
-    NSString *error = nil;
-    NSDictionary *config = ReadSlackConfig(path, &error);
-    if (!config) { Report(error ?: L(@"Set discovery.channel or configure peers in the agents array in the Slack configuration.")); return 1; }
+    NSDictionary *config = CCBridgeSlackLoadConfiguration(path);
+    if (!config || (!config[@"discovery"] && ![config[@"agents"] count])) { Report(L(@"Set discovery.channel or configure peers in the agents array in the Slack configuration.")); return 1; }
     if (managed && ![config[@"enabled"] isEqual:@YES]) return 0;
     if (managed) {
         // Only the desktop parent holds the writing end. Closing it on quit,
@@ -833,15 +868,6 @@ int CCBridgeRunSlack(NSArray<NSString *> *arguments) {
     }
     NSArray *agents = config[@"agents"];
     CCBridgeSlackAdapter *adapter = [CCBridgeSlackAdapter new];
-    adapter.appToken = config[@"app_token"];
-    adapter.botToken = config[@"bot_token"];
-    if (!managed) {
-        if (!adapter.appToken.length) adapter.appToken = CCPetsEnvironmentValue(@"SLACK_APP_TOKEN");
-        if (!adapter.botToken.length) adapter.botToken = CCPetsEnvironmentValue(@"SLACK_BOT_TOKEN");
-    }
-    if (![adapter.appToken hasPrefix:@"xapp-"] || ![adapter.botToken hasPrefix:@"xoxb-"]) {
-        Report(L(@"Set app_token (xapp-) and bot_token (xoxb-) in the Slack JSON, or supply the tokens in the terminal environment.")); return 1;
-    }
     NSString *lock = CCBridgeAcquireLock(@"slack-adapter");
     if (!lock) { Report(L(@"The Slack adapter is already running.")); return 1; }
     NSMutableDictionary *peers = [NSMutableDictionary dictionary];
@@ -849,13 +875,29 @@ int CCBridgeRunSlack(NSArray<NSString *> *arguments) {
     io_object_t notifier = IO_OBJECT_NULL;
     dispatch_queue_t powerQueue = dispatch_queue_create("cc-pets.slack.power", DISPATCH_QUEUE_SERIAL);
     @try {
+        SetSlackStatus(@"connecting", nil);
+        NSError *error = nil;
+        adapter.appToken = managed ? nil : CCPetsEnvironmentValue(@"SLACK_APP_TOKEN");
+        adapter.botToken = managed ? nil : CCPetsEnvironmentValue(@"SLACK_BOT_TOKEN");
+        if (!adapter.appToken.length || !adapter.botToken.length) {
+            BOOL silent = DisableAdapterKeychainUI();
+            if (silent && !adapter.appToken.length) adapter.appToken = CCBridgeSlackReadToken(path, config, @"app_token", &error);
+            if (silent && !error && !adapter.botToken.length) adapter.botToken = CCBridgeSlackReadToken(path, config, @"bot_token", &error);
+            if (!silent || error.code == errSecInteractionNotAllowed || error.code == errSecAuthFailed || error.code == errSecUserCanceled) {
+                SlackStartupError(L(@"Keychain access needed. Click Test connection and save in Remote Connections."));
+                return CCBridgeSlackKeychainAccessRequired;
+            }
+            if (error) return SlackStartupError(error.localizedDescription);
+        }
+        if (![adapter.appToken hasPrefix:@"xapp-"] || ![adapter.botToken hasPrefix:@"xoxb-"]) {
+            return SlackStartupError(L(@"Configure both Slack tokens in Bridge → Remote Connections."));
+        }
         NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
         configuration.URLCache = nil;
         adapter.http = [NSURLSession sessionWithConfiguration:configuration];
         NSDictionary *auth = CCBridgeSlackAPI(adapter.http, @"auth.test", adapter.botToken, nil);
-        if (![auth[@"ok"] isEqual:@YES] || !Matches(auth[@"team_id"], @"^T[A-Z0-9]+\\z") ||
-            !Matches(auth[@"user_id"], @"^[UW][A-Z0-9]+\\z") || !Matches(auth[@"bot_id"], @"^B[A-Z0-9]+\\z")) {
-            Report(auth[@"error"] ?: @"invalid_bot_identity"); return 1;
+        if (!ValidBotIdentity(auth)) {
+            return SlackStartupError(auth[@"error"] ?: @"invalid_bot_identity");
         }
         adapter.team = auth[@"team_id"];
         adapter.user = auth[@"user_id"];
@@ -867,10 +909,10 @@ int CCBridgeRunSlack(NSArray<NSString *> *arguments) {
             adapter.publications = [NSMutableDictionary dictionary];
         }
         NSDictionary *connection = CCBridgeSlackAPI(adapter.http, @"apps.connections.open", adapter.appToken, nil);
-        if (![connection[@"ok"] isEqual:@YES]) { Report(connection[@"error"] ?: @"invalid_socket_url"); return 1; }
+        if (![connection[@"ok"] isEqual:@YES]) { return SlackStartupError(connection[@"error"] ?: @"invalid_socket_url"); }
         for (NSDictionary *agent in agents) {
             if ([agent[@"bot_id"] isEqual:adapter.bot] || [agent[@"user_id"] isEqual:adapter.user]) {
-                Report(L(@"A Slack peer cannot be the adapter itself.")); return 1;
+                return SlackStartupError(L(@"A Slack peer cannot be the adapter itself."));
             }
             NSString *endpoint = ChannelBot(agent[@"channel"], agent[@"bot_id"]);
             BOOL machine = [agent[@"bridge"] boolValue];
@@ -884,8 +926,7 @@ int CCBridgeRunSlack(NSArray<NSString *> *arguments) {
             peers[endpoint] = peer;
             if (machine) peer[@"name"] = agent[@"name"];
             else if (![session[@"name"] isEqual:agent[@"name"]]) {
-                Report([NSString stringWithFormat:@"%@ %@", agent[@"name"], L(@"Slack agent name already in use.")]);
-                return 1;
+                return SlackStartupError([NSString stringWithFormat:@"%@ %@", agent[@"name"], L(@"Slack agent name already in use.")]);
             }
             if (CCBridgeIsRemoteHost(peer)) {
                 CCBridgeClearRemoteDirectory(peer);

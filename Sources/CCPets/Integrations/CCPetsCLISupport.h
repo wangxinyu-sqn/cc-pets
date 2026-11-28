@@ -59,6 +59,8 @@ BOOL CCPetsWriteFileAtomically(NSString *path, NSString *text, mode_t mode, NSSt
 // 解析已有的 JSON 配置（保序，见 CCPetsJSON.h）。文件不存在返回 nil 且不设 errorMessage；
 // 解析失败返回 nil 并给出原因；顶层不是对象时返回 NSNull。
 id CCPetsReadConfig(NSString *path, NSString **errorMessage);
+@class CCPetsJSONObject;
+BOOL CCPetsWriteChangedConfig(NSString *path, CCPetsJSONObject *document, mode_t mode, NSString **error);
 
 #pragma mark - 子进程
 

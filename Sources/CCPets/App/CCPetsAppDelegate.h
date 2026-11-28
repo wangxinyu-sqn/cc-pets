@@ -55,6 +55,7 @@
 @property BOOL bridgeCommandRunning;
 @property NSTask *managedSlackTask;
 @property NSArray *slackConfigRevision;
+@property NSDictionary *slackConfiguration;
 @property BOOL slackAutoStart;
 @property NSTimeInterval slackRetryAt;
 // 手动 Agent Home 适配任务与其非阻塞进度窗口。

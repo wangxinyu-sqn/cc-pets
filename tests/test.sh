@@ -136,7 +136,7 @@ marked_event_count() {
 # 文件挪目录时这里的断言和 harness 编译命令都不用改。取值一律写 ${PET_SRC[名字]:?}，
 # 文件名写错或文件被删会直接报错退出，而不是让 grep 拿空路径静默放过。
 PET_SOURCE_DIR="${PROJECT_DIR}/Sources/CCPets"
-PET_SOURCES=("${PET_SOURCE_DIR}"/**/*.m(N) "${PET_SOURCE_DIR}"/**/*.h(N))
+PET_SOURCES=("${PET_SOURCE_DIR}"/**/*.(m|c|h)(N))
 if (( ${#PET_SOURCES[@]} == 0 )); then
   print -u2 "找不到任何 Objective-C 源文件"
   exit 1
@@ -1556,7 +1556,7 @@ doctor_env "${PROJECT_DIR}/bin/cc-pets" paths --json | node -e 'JSON.parse(requi
 # ---- cc-pets open：从终端打开主窗口 ----
 # 帮助里有；页面参数在发通知 / 拉起 App 之前就校验，拼错的页面不该启动任何东西。
 "${PROJECT_DIR}/bin/cc-pets" --help | grep -q "cc-pets open"
-for page in overview sessions usage pet alerts general diagnostics; do
+for page in overview sessions bridge usage pet alerts general diagnostics; do
   doctor_env "${PROJECT_DIR}/.build/release/cc-pets" open --help | grep -q "${page}"
 done
 if doctor_env "${PROJECT_DIR}/.build/release/cc-pets" open no-such-page >/dev/null 2>&1; then
@@ -1593,17 +1593,24 @@ grep -A8 'applicationShouldHandleReopen' "${PET_SRC[CCPetsAppDelegate.m]:?}" \
 grep -q "CCPetsOpenWindowNotificationName" "${PET_SRC[CCPetsAppDelegate.m]:?}"
 # 结构化结果：主窗口诊断页直接用 CCPetsDoctorSections()，不经过 CLI 文本。
 # doctor 牵涉的模块太多，按全部源码（去掉 main.m）编进 harness。
-DOCTOR_SECTIONS_SOURCES=("${PET_SOURCE_DIR}"/**/*.m(N))
+DOCTOR_SECTIONS_SOURCES=("${PET_SOURCE_DIR}"/**/*.(m|c)(N))
 DOCTOR_SECTIONS_SOURCES=("${(@)DOCTOR_SECTIONS_SOURCES:#*/main.m}")
 cc_pets_compile -fobjc-arc -mmacosx-version-min=13.0 \
   "${PET_INCLUDE_FLAGS[@]}" \
   -DCC_PETS_VERSION="\"0.0.0-test\"" \
-  -framework Cocoa -framework CoreServices -framework ImageIO -framework IOKit \
+  -framework Cocoa -framework CoreServices -framework ImageIO -framework Security -framework IOKit \
   -framework QuartzCore -framework UserNotifications -lsqlite3 \
   "${DOCTOR_SECTIONS_SOURCES[@]}" \
   "${PROJECT_DIR}/tests/doctor-sections-harness.m" \
   -o "${DOCTOR_TMP}/doctor-sections-test"
 doctor_env PATH="${DOCTOR_TMP}/shims:${DOCTOR_PATH}" "${DOCTOR_TMP}/doctor-sections-test"
+cc_pets_compile -fobjc-arc -mmacosx-version-min=13.0 \
+  "${PET_INCLUDE_FLAGS[@]}" -DCC_PETS_VERSION="\"0.0.0-test\"" \
+  -framework Cocoa -framework CoreServices -framework ImageIO -framework Security -framework IOKit \
+  -framework QuartzCore -framework UserNotifications -lsqlite3 \
+  "${DOCTOR_SECTIONS_SOURCES[@]}" "${PROJECT_DIR}/tests/slack-configuration-harness.m" \
+  -o "${DOCTOR_TMP}/slack-configuration-test"
+CC_PETS_HOME="${DOCTOR_TMP}/slack-home" CC_PETS_STATE_DIR="${DOCTOR_TMP}/slack-state" "${DOCTOR_TMP}/slack-configuration-test"
 # 主窗口里的诊断跑在桌宠进程中，PATH 是桌宠启动时继承的（被 npm 拉起时 node 目录会插在最前），
 # 和终端无关。PATH 顺序那一项在那里只能给提示，不能照着报警告。
 DOCTOR_SHADOW="${DOCTOR_TMP}/shadow-node-bin"
@@ -1657,7 +1664,7 @@ PROFILE_HOME_TMP="$(mktemp -d /tmp/cc-pets-profile-home-test.XXXXXX)"
 cc_pets_compile -fobjc-arc -mmacosx-version-min=13.0 \
   "${PET_INCLUDE_FLAGS[@]}" \
   -DCC_PETS_VERSION="\"0.0.0-test\"" \
-  -framework Cocoa -framework CoreServices -framework ImageIO -framework IOKit \
+  -framework Cocoa -framework CoreServices -framework ImageIO -framework Security -framework IOKit \
   -framework QuartzCore -framework UserNotifications -lsqlite3 \
   "${DOCTOR_SECTIONS_SOURCES[@]}" \
   "${PROJECT_DIR}/tests/profile-home-harness.m" \
@@ -2446,7 +2453,7 @@ cc_pets_compile -fobjc-arc -mmacosx-version-min=13.0 \
   "${PET_SRC[CCPetsBridge.m]:?}" \
   "${PET_SRC[CCPetsBridgeAttachments.m]:?}" \
   "${PET_SRC[CCPetsBridgeCore.m]:?}" \
-  "${PET_SRC[CCPetsBridgeSetup.m]:?}" \
+  "${PET_SRC[CCPetsBridgeSetup.m]:?}" "${PET_SRC[CCPetsHookMerge.m]:?}" "${PET_SRC[CCPetsCodexConfig.m]:?}" "${PET_SRC[tomlc17.c]:?}" \
   "${PET_SRC[CCPetsAntigravityConfig.m]:?}" \
   "${PET_SRC[CCPetsBridgeStore.m]:?}" \
   "${PET_SRC[CCPetsCLISupport.m]:?}" \
@@ -2458,6 +2465,7 @@ cc_pets_compile -fobjc-arc -mmacosx-version-min=13.0 \
   -o "${BRIDGE_UNITS_TMP}/bridge-units-test"
 "${BRIDGE_UNITS_TMP}/bridge-units-test" "${BRIDGE_UNITS_TMP}"
 node "${PROJECT_DIR}/tests/bridge-harness.mjs"
+node "${PROJECT_DIR}/tests/config-reconcile-harness.mjs"
 print "CC Bridge 测试通过"
 
 # 这条断言本身失灵是最坏的情况：它会一路绿灯，直到某天真的把用户桌宠打回“正在启动”。

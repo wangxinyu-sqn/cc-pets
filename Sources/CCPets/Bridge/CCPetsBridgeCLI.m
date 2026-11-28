@@ -880,7 +880,7 @@ static BOOL InstallBridgeForRegisteredProfiles(NSDictionary *options, BOOL regis
     return succeeded;
 }
 
-static BOOL UninstallBridgeForRegisteredProfiles(BOOL unregisterMcp) {
+static BOOL UninstallBridgeForRegisteredProfiles(BOOL unregisterMcp, NSDictionary *oldOptions) {
     BOOL succeeded = YES;
     NSArray<NSDictionary *> *profiles = RegisteredProfiles();
     if (profiles.count == 0) {
@@ -888,7 +888,7 @@ static BOOL UninstallBridgeForRegisteredProfiles(BOOL unregisterMcp) {
     }
     for (NSDictionary *profile in profiles) {
         @try {
-            for (NSString *line in CCBridgeUninstallForProfile(profile, unregisterMcp)) {
+            for (NSString *line in CCBridgeUninstallForProfile(profile, unregisterMcp, oldOptions)) {
                 Print(line);
                 if ([line hasPrefix:@"ERROR: "]) succeeded = NO;
             }
@@ -930,14 +930,20 @@ static int RefreshCommand(void) {
     if (!CCBridgeEnabled()) return 0;
     NSDictionary *options = CCBridgeNormalizeOptions(CCBridgeReadSavedOptions());
     BOOL succeeded = InstallBridgeForRegisteredProfiles(options, CCBridgeShouldTouchMCP());
-    CCBridgeSetEnabled(YES, options);
     return succeeded ? 0 : 1;
 }
 
 static int DisableCommand(void) {
     // 先关闭运行时入口，卸载耗时或失败也不能继续发送/唤醒。
+    NSString *pending = [CCBridgeHomeDirectory() stringByAppendingPathComponent:@"bridge-disable-pending.json"];
+    NSDictionary *oldOptions = CCBridgeNormalizeOptions(CCBridgeReadJSON(pending));
+    if (CCBridgeEnabled()) {
+        oldOptions = CCBridgeOptions();
+        CCBridgeWriteJSON(pending, oldOptions);
+    }
     CCBridgeSetEnabled(NO, nil);
-    BOOL succeeded = UninstallBridgeForRegisteredProfiles(CCBridgeShouldTouchMCP());
+    BOOL succeeded = UninstallBridgeForRegisteredProfiles(CCBridgeShouldTouchMCP(), oldOptions);
+    if (succeeded) unlink(pending.fileSystemRepresentation);
     // 关闭后 hook 不再运行，没人会来收尾。已送达的回执留作记录，它们不含正文。
     @try {
         CCBridgeAbandonAllInboxes(L(@"CC Bridge is off."));

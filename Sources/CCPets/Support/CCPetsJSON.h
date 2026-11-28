@@ -11,6 +11,8 @@
 
 @interface CCPetsJSONObject : NSObject <NSCopying>
 @property (nonatomic, readonly) NSArray<NSString *> *keys;
+// Input bytes for compare-before-replace configuration writes.
+@property (nonatomic, copy) NSData *sourceData;
 - (id)objectForKeyedSubscript:(NSString *)key;
 // 已有的键原位替换值，新键追加到末尾，与 JS 对象的属性顺序规则相同。
 - (void)setObject:(id)value forKeyedSubscript:(NSString *)key;

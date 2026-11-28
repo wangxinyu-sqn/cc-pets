@@ -4,6 +4,7 @@
 #import "CCPetsBridgeStore.h"
 #import "CCPetsCLISupport.h"
 #import "CCPetsJSON.h"
+#import "CCPetsHookMerge.h"
 #import "CCPetsL10n.h"
 #import "CCPetsProfiles.h"
 #import <errno.h>
@@ -30,7 +31,7 @@ static CCPetsJSONObject *Object(id value) {
     return [value isKindOfClass:CCPetsJSONObject.class] ? value : nil;
 }
 
-CCPetsJSONObject *CCPetsReadAntigravityConfig(NSString *path, NSString **errorMessage) {
+static CCPetsJSONObject *ReadAgyDocument(NSString *path, NSString **errorMessage, BOOL editing) {
     NSError *readError = nil;
     NSData *data = [NSData dataWithContentsOfFile:path options:0 error:&readError];
     if (!data) {
@@ -44,18 +45,27 @@ CCPetsJSONObject *CCPetsReadAntigravityConfig(NSString *path, NSString **errorMe
     NSUInteger index = 0;
     while (index < data.length && (bytes[index] == ' ' || bytes[index] == '\t' ||
         bytes[index] == '\r' || bytes[index] == '\n')) index++;
-    if (index == data.length) return nil;
+    if (index == data.length) {
+        CCPetsJSONObject *empty = editing ? [CCPetsJSONObject new] : nil;
+        empty.sourceData = data;
+        return empty;
+    }
     id document = CCPetsJSONParse(data, errorMessage);
     if (document && !Object(document)) {
         if (errorMessage) *errorMessage = L(@"Expected a JSON object.");
         return nil;
     }
+    ((CCPetsJSONObject *)document).sourceData = data;
     return document;
+}
+
+CCPetsJSONObject *CCPetsReadAntigravityConfig(NSString *path, NSString **errorMessage) {
+    return ReadAgyDocument(path, errorMessage, NO);
 }
 
 static CCPetsJSONObject *ReadConfig(NSString *path) {
     NSString *error = nil;
-    CCPetsJSONObject *document = CCPetsReadAntigravityConfig(path, &error);
+    CCPetsJSONObject *document = ReadAgyDocument(path, &error, YES);
     if (error) [NSException raise:@"CCPetsAntigravityConfig" format:@"%@: %@", path, error];
     return document;
 }
@@ -73,7 +83,7 @@ static BOOL UpdateConfig(NSString *path, BOOL (^update)(CCPetsJSONObject *)) {
         struct stat info;
         mode_t mode = stat(path.fileSystemRepresentation, &info) == 0 ? info.st_mode & 0777 : 0600;
         NSString *error = nil;
-        if (!CCPetsWriteFileAtomically(path, [CCPetsJSONStringify(document) stringByAppendingString:@"\n"], mode, &error)) {
+        if (!CCPetsWriteChangedConfig(path, document, mode, &error)) {
             [NSException raise:@"CCPetsAntigravityConfig" format:@"%@", error];
         }
         return @YES;
@@ -204,67 +214,90 @@ static BOOL IsToolEvent(NSString *event) {
     return [event isEqual:@"PreToolUse"] || [event isEqual:@"PostToolUse"];
 }
 
-static BOOL HasHook(id candidate, NSString *event) {
-    id entries = Object(candidate)[event];
+static NSString *AgyHookRole(id command) {
+    NSArray *args = CCPetsHookInvocation(command, nil);
+    if (args.count != 3 || !CCPetsIsPetExecutable(args[0]) || ![args[1] isEqual:@"--agy-hook"]) return nil;
+    return [Events() containsObject:args[2]] ? @"pet" : nil;
+}
+
+static BOOL HasHook(CCPetsJSONObject *group, NSString *event) {
+    id entries = group[event];
     if (![entries isKindOfClass:NSArray.class]) return NO;
     for (id entry in entries) {
         NSArray *handlers = IsToolEvent(event) ? Object(entry)[@"hooks"] : @[entry];
         if (![handlers isKindOfClass:NSArray.class]) continue;
-        for (id handler in handlers) {
-            id command = Object(handler)[@"command"];
-            if ([command isKindOfClass:NSString.class] && [command hasPrefix:HookMarker]) return YES;
-        }
+        for (id handler in handlers) if (AgyHookRole(Object(handler)[@"command"])) return YES;
     }
-    return NO;
-}
-
-static BOOL OwnsHook(id candidate) {
-    for (NSString *event in Events()) if (HasHook(candidate, event)) return YES;
     return NO;
 }
 
 BOOL CCPetsAntigravityPetHooksInstalled(NSDictionary *profile) {
     @try {
-        CCPetsJSONObject *hook = Object(ReadConfig(ProfileFile(profile, @"config/hooks.json"))[HookName]);
-        if ([hook[@"enabled"] isEqual:@NO]) return NO;
-        for (NSString *event in Events()) if (!HasHook(hook, event)) return NO;
+        CCPetsJSONObject *document = ReadConfig(ProfileFile(profile, @"config/hooks.json"));
+        for (NSString *event in Events()) {
+            BOOL found = NO;
+            for (NSString *key in document.keys) {
+                CCPetsJSONObject *group = Object(document[key]);
+                if (![group[@"enabled"] isEqual:@NO] && HasHook(group, event)) { found = YES; break; }
+            }
+            if (!found) return NO;
+        }
         return YES;
     } @catch (NSException *exception) { return NO; }
 }
 
-NSArray<NSString *> *CCPetsInstallAntigravityPetHooks(NSDictionary *profile) {
-    NSString *path = ProfileFile(profile, @"config/hooks.json");
-    UpdateConfig(path, ^BOOL(CCPetsJSONObject *document) {
-        if (document[HookName] && !OwnsHook(document[HookName])) {
-            [NSException raise:@"CCPetsAntigravityConfig" format:@"%@: %@", path, L(@"The Antigravity hook name is already in use.")];
-        }
-        NSMutableDictionary *hook = [NSMutableDictionary dictionary];
+static BOOL ReconcileAgyHooks(NSDictionary *profile, BOOL install) {
+    return UpdateConfig(ProfileFile(profile, @"config/hooks.json"), ^BOOL(CCPetsJSONObject *document) {
+        BOOL changed = NO;
         for (NSString *event in Events()) {
-            NSString *command = [NSString stringWithFormat:@"%@%@ %@ --agy-hook %@",
-                HookMarker, ProfileEnvironment(profile), CCPetsShellQuote(CCPetsExecutablePath()), event];
-            NSArray *handlers = @[@{@"type": @"command", @"command": command, @"timeout": @10}];
-            hook[event] = IsToolEvent(event) ? @[@{@"matcher": @"*", @"hooks": handlers}] : handlers;
+            NSString *slot = HookName;
+            if (!HasHook(Object(document[slot]), event)) {
+                for (NSString *key in document.keys) {
+                    if (HasHook(Object(document[key]), event)) { slot = key; break; }
+                }
+            }
+            NSMutableOrderedSet *groups = [NSMutableOrderedSet orderedSetWithArray:document.keys];
+            if (install) [groups addObject:slot];
+            for (NSString *key in groups) {
+                CCPetsJSONObject *group = Object(document[key]);
+                BOOL target = install && [key isEqual:slot];
+                if (!target && !HasHook(group, event)) continue;
+                if (!group && document[key]) [NSException raise:@"CCPetsHooks" format:@"%@", L(@"The Antigravity hook name is already in use.")];
+                group = group ?: [CCPetsJSONObject new];
+                NSArray *wanted = @[];
+                if (target) {
+                    NSString *command = [NSString stringWithFormat:@"%@%@ %@ --agy-hook %@", HookMarker,
+                        ProfileEnvironment(profile), CCPetsShellQuote(CCPetsExecutablePath()), event];
+                    NSDictionary *handler = @{@"type": @"command", @"command": command, @"timeout": @10};
+                    wanted = IsToolEvent(event) ? @[@{@"matcher": @"*", @"hooks": @[handler]}] : @[handler];
+                }
+                NSArray *entries = CCPetsMergeHookEntries(group[event], wanted, IsToolEvent(event), ^NSString *(id cmd) { return AgyHookRole(cmd); });
+                if ([CCPetsJSONStringify(entries) isEqual:CCPetsJSONStringify(group[event] ?: @[])]) continue;
+                changed = YES;
+                if (entries.count) group[event] = entries; else [group removeObjectForKey:event];
+                if (!group.keys.count && [key isEqual:HookName]) [document removeObjectForKey:key]; else document[key] = group;
+            }
         }
-        document[HookName] = hook;
-        return YES;
+        return changed;
     });
+}
+
+NSArray<NSString *> *CCPetsInstallAntigravityPetHooks(NSDictionary *profile) {
+    ReconcileAgyHooks(profile, YES);
     ChangeStatusLine(profile, YES);
-    return @[CCPetsInterpolate(L(@"Antigravity CLI hooks configured in {path}."), @{@"path": path})];
+    return @[CCPetsInterpolate(L(@"Antigravity CLI hooks configured in {path}."), @{@"path": ProfileFile(profile, @"config/hooks.json")})];
 }
 
 BOOL CCPetsRemoveAntigravityPetHooks(NSDictionary *profile) {
-    UpdateConfig(ProfileFile(profile, @"config/hooks.json"), ^BOOL(CCPetsJSONObject *document) {
-        if (!OwnsHook(document[HookName])) return NO;
-        [document removeObjectForKey:HookName];
-        return YES;
-    });
+    ReconcileAgyHooks(profile, NO);
     ChangeStatusLine(profile, NO);
     return YES;
 }
 
 static BOOL OwnsMCP(id candidate) {
     CCPetsJSONObject *server = Object(candidate);
-    return [Object(server[@"env"])[MCPMarker] isEqual:@"1"] && [server[@"args"] isEqual:@[@"bridge", @"mcp"]];
+    return CCPetsIsPetExecutable(server[@"command"]) && CCPetsIsBridgeTransport(server[@"command"], server[@"args"]) &&
+        !server[@"serverUrl"] && !server[@"url"];
 }
 
 BOOL CCPetsAntigravityBridgeInstalled(NSDictionary *profile) {
@@ -272,7 +305,7 @@ BOOL CCPetsAntigravityBridgeInstalled(NSDictionary *profile) {
         CCPetsJSONObject *mcp = ReadConfig(ProfileFile(profile, @"config/mcp_config.json"));
         CCPetsJSONObject *server = Object(Object(mcp[@"mcpServers"])[CCBridgeMCPName]);
         NSString *command = server[@"command"];
-        return CCPetsAntigravityPetHooksInstalled(profile) && OwnsMCP(server) &&
+        return CCPetsAntigravityPetHooksInstalled(profile) && OwnsMCP(server) && ![server[@"disabled"] isEqual:@YES] &&
             [command isKindOfClass:NSString.class] && command.isAbsolutePath &&
             [NSFileManager.defaultManager isExecutableFileAtPath:command];
     } @catch (NSException *exception) { return NO; }
@@ -285,6 +318,19 @@ static BOOL ChangeMCP(NSDictionary *profile, BOOL enabled) {
         id current = servers[CCBridgeMCPName];
         if (!enabled) {
             if (!OwnsMCP(current)) return NO;
+            CCPetsJSONObject *server = Object(current), *env = Object(server[@"env"]);
+            if (server[@"env"] && !env) [NSException raise:@"CCPetsAntigravityConfig" format:@"Invalid MCP environment"];
+            BOOL custom = [server[@"args"] count] > 2;
+            for (NSString *key in server.keys) if (![@[@"command",@"args",@"env"] containsObject:key]) custom = YES;
+            for (NSString *key in env.keys) if (![@[MCPMarker,@"CC_PETS_HOME",@"CC_PETS_STATE_DIR"] containsObject:key]) custom = YES;
+            if (custom) {
+                if ([server[@"disabled"] isEqual:@YES]) return NO;
+                env = env ?: [CCPetsJSONObject new];
+                env[MCPMarker] = server[@"disabled"] ? @"paused:false" : @"paused:default";
+                server[@"env"] = env;
+                server[@"disabled"] = @YES;
+                return YES;
+            }
             [servers removeObjectForKey:CCBridgeMCPName];
             if (servers.keys.count == 0) [document removeObjectForKey:@"mcpServers"];
             return YES;
@@ -296,7 +342,11 @@ static BOOL ChangeMCP(NSDictionary *profile, BOOL enabled) {
         CCPetsJSONObject *server = Object(current) ?: [CCPetsJSONObject new];
         CCPetsJSONObject *environment = Object(server[@"env"]) ?: [CCPetsJSONObject new];
         NSString *command = CCPetsExecutablePath();
-        BOOL changed = ![server[@"command"] isEqual:command] || !OwnsMCP(server);
+        if (server[@"env"] && !Object(server[@"env"])) [NSException raise:@"CCPetsAntigravityConfig" format:@"Invalid MCP environment"];
+        NSString *marker = environment[MCPMarker];
+        BOOL changed = ![server[@"command"] isEqual:command] || ![marker isEqual:@"1"];
+        if ([server[@"disabled"] isEqual:@YES] && [marker isEqual:@"paused:false"]) server[@"disabled"] = @NO;
+        if ([server[@"disabled"] isEqual:@YES] && [marker isEqual:@"paused:default"]) [server removeObjectForKey:@"disabled"];
         for (NSString *key in @[@"CC_PETS_HOME", @"CC_PETS_STATE_DIR"]) {
             NSString *value = CCPetsEnvironmentValue(key);
             id old = environment[key];
@@ -307,7 +357,7 @@ static BOOL ChangeMCP(NSDictionary *profile, BOOL enabled) {
         if (!changed) return NO;
         environment[MCPMarker] = @"1";
         server[@"command"] = command;
-        server[@"args"] = @[@"bridge", @"mcp"];
+        if (!current) server[@"args"] = @[@"bridge", @"mcp"];
         server[@"env"] = environment;
         servers[CCBridgeMCPName] = server;
         document[@"mcpServers"] = servers;
@@ -319,39 +369,31 @@ static NSString *AllowRule(NSString *tool) {
     return [NSString stringWithFormat:@"mcp(%@/%@)", CCBridgeMCPName, tool];
 }
 
-static void SetAllows(NSDictionary *profile, NSArray<NSString *> *allowed) {
+static BOOL AgyAllowsBelongToBridge(NSDictionary *profile) {
+    id servers = ReadConfig(ProfileFile(profile, @"config/mcp_config.json"))[@"mcpServers"];
+    return (!servers || Object(servers)) && (!servers[CCBridgeMCPName] || OwnsMCP(servers[CCBridgeMCPName]));
+}
+
+static void SetAllows(NSDictionary *profile, NSArray *allowed, NSArray *oldTools) {
     UpdateConfig(ProfileFile(profile, @"antigravity-cli/settings.json"), ^BOOL(CCPetsJSONObject *document) {
-        CCPetsJSONObject *permissions = Object(document[@"permissions"]);
-        NSArray *current = permissions[@"allow"];
-        if ((document[@"permissions"] && !permissions) || (current && ![current isKindOfClass:NSArray.class])) {
-            [NSException raise:@"CCPetsAntigravityConfig" format:@"%@", L(@"Expected an Antigravity permissions object with an allow array.")];
-        }
-        NSMutableSet *managed = [NSMutableSet set];
-        for (NSString *group in CCBridgeToolGroupNames()) {
-            for (NSString *tool in CCBridgeToolGroup(group)) [managed addObject:AllowRule(tool)];
-        }
-        NSMutableArray *updated = [NSMutableArray array];
-        for (id rule in current) if (![managed containsObject:rule]) [updated addObject:rule];
-        for (NSString *tool in allowed) [updated addObject:AllowRule(tool)];
-        if ([updated isEqualToArray:current ?: @[]]) return NO;
-        if (!permissions) permissions = [CCPetsJSONObject new];
-        if (updated.count > 0) permissions[@"allow"] = updated;
-        else [permissions removeObjectForKey:@"allow"];
-        if (permissions.keys.count > 0) document[@"permissions"] = permissions;
-        else [document removeObjectForKey:@"permissions"];
-        return YES;
+        NSMutableArray *wanted = [NSMutableArray array];
+        NSMutableSet *revoke = [NSMutableSet set];
+        for (NSString *tool in allowed) [wanted addObject:AllowRule(tool)];
+        for (NSString *tool in oldTools) [revoke addObject:AllowRule(tool)];
+        return CCPetsMergeAllows(document, wanted, revoke);
     });
 }
 
 NSArray<NSString *> *CCPetsInstallAntigravityBridge(NSDictionary *profile, NSArray<NSString *> *allowed, BOOL registerMcp) {
+    if (!AgyAllowsBelongToBridge(profile)) [NSException raise:@"CCPetsAntigravityConfig" format:@"%@", L(@"The Antigravity MCP server name is already in use.")];
     NSMutableArray *report = [CCPetsInstallAntigravityPetHooks(profile) mutableCopy];
     if (registerMcp && ChangeMCP(profile, YES)) [report addObject:L(@"Registered CC Bridge MCP for Antigravity CLI.")];
-    SetAllows(profile, allowed);
+    SetAllows(profile, allowed, CCBridgeOptions()[@"antigravityAllow"]);
     return report;
 }
 
-NSArray<NSString *> *CCPetsRemoveAntigravityBridge(NSDictionary *profile, BOOL unregisterMcp) {
-    SetAllows(profile, @[]);
+NSArray<NSString *> *CCPetsRemoveAntigravityBridge(NSDictionary *profile, BOOL unregisterMcp, NSArray *oldTools) {
+    if (AgyAllowsBelongToBridge(profile)) SetAllows(profile, @[], oldTools);
     return unregisterMcp && ChangeMCP(profile, NO) ? @[L(@"Removed CC Bridge MCP from Antigravity CLI.")] : @[];
 }
 
@@ -368,7 +410,7 @@ static NSArray<NSString *> *AppSidecarArguments(void) {
 }
 
 static BOOL OwnsAppSidecar(CCPetsJSONObject *manifest) {
-    return [manifest[@"description"] isEqual:AppSidecarDescription] &&
+    return CCPetsIsPetExecutable(manifest[@"command"]) &&
         [manifest[@"args"] isEqual:AppSidecarArguments()];
 }
 
@@ -384,7 +426,7 @@ BOOL CCPetsAntigravityAppSidecarInstalled(NSDictionary *profile) {
         return OwnsAppSidecar(manifest) && [command isKindOfClass:NSString.class] && command.isAbsolutePath &&
             [NSFileManager.defaultManager isExecutableFileAtPath:command] &&
             OwnsMCP(server) && [server[@"command"] isEqual:command] &&
-            [manifest[@"restart_policy"] isEqual:@"on-failure"] && [state[@"enabled"] isEqual:@YES];
+            [state[@"enabled"] isEqual:@YES];
     } @catch (NSException *exception) { return NO; }
 }
 
@@ -414,25 +456,46 @@ NSArray<NSString *> *CCPetsConfigureAntigravityAppSidecar(NSDictionary *profile,
 
             UpdateConfig(manifestPath, ^BOOL(CCPetsJSONObject *document) {
                 if (document.keys.count > 0 && !OwnsAppSidecar(document)) FailSidecarCollision(manifestPath);
-                NSMutableDictionary *environment = [NSMutableDictionary dictionary];
+                CCPetsJSONObject *environment = Object(document[@"env"]) ?: [CCPetsJSONObject new];
+                if (document[@"env"] && !Object(document[@"env"])) FailSidecarCollision(manifestPath);
                 for (NSString *key in @[@"CC_PETS_HOME", @"CC_PETS_STATE_DIR"]) {
                     NSString *value = CCPetsEnvironmentValue(key);
-                    if (value) environment[key] = value;
+                    if (value) environment[key] = value; else [environment removeObjectForKey:key];
                 }
-                document[@"display_name"] = @"CC Pets Bridge";
-                document[@"description"] = AppSidecarDescription;
+                if (!document[@"display_name"]) document[@"display_name"] = @"CC Pets Bridge";
+                if (!document[@"description"]) document[@"description"] = AppSidecarDescription;
                 document[@"command"] = CCPetsExecutablePath();
                 document[@"args"] = AppSidecarArguments();
-                document[@"restart_policy"] = @"on-failure";
-                if (environment.count > 0) document[@"env"] = environment;
+                if (!document[@"restart_policy"]) document[@"restart_policy"] = @"on-failure";
+                if (environment.keys.count > 0) document[@"env"] = environment;
                 else [document removeObjectForKey:@"env"];
                 return YES;
             });
         }
 
+        BOOL keep = NO;
+        for (NSString *key in manifest.keys) if (![@[@"display_name", @"description", @"command", @"args", @"restart_policy", @"env"] containsObject:key]) keep = YES;
+        for (NSString *key in Object(manifest[@"env"]).keys) if (![@[@"CC_PETS_HOME", @"CC_PETS_STATE_DIR"] containsObject:key]) keep = YES;
+        if (manifest[@"env"] && !Object(manifest[@"env"])) FailSidecarCollision(manifestPath);
+        if (state && !Object(state)) FailSidecarCollision(configPath);
+        if (owned && (![manifest[@"display_name"] isEqual:@"CC Pets Bridge"] || ![manifest[@"description"] isEqual:AppSidecarDescription] ||
+            ![manifest[@"restart_policy"] isEqual:@"on-failure"])) keep = YES;
+        for (NSString *key in Object(state).keys) if (![key isEqual:@"enabled"]) keep = YES;
+
         UpdateConfig(configPath, ^BOOL(CCPetsJSONObject *document) {
             CCPetsJSONObject *entries = Object(document[@"sidecars"]);
+            if ((document[@"sidecars"] && !entries) || (entries[AppSidecarName] && !Object(entries[AppSidecarName])))
+                FailSidecarCollision(configPath);
             if (!enabled) {
+                if (keep) {
+                    CCPetsJSONObject *entry = Object(entries[AppSidecarName]) ?: [CCPetsJSONObject new];
+                    if ([entry[@"enabled"] isEqual:@NO]) return NO;
+                    entries = entries ?: [CCPetsJSONObject new];
+                    entry[@"enabled"] = @NO;
+                    entries[AppSidecarName] = entry;
+                    document[@"sidecars"] = entries;
+                    return YES;
+                }
                 if (!entries[AppSidecarName]) return NO;
                 [entries removeObjectForKey:AppSidecarName];
                 if (entries.keys.count == 0) [document removeObjectForKey:@"sidecars"];
@@ -440,8 +503,9 @@ NSArray<NSString *> *CCPetsConfigureAntigravityAppSidecar(NSDictionary *profile,
             }
             id existing = entries[AppSidecarName];
             CCPetsJSONObject *entry = Object(existing);
-            if ((document[@"sidecars"] && !entries) || (existing && !entry)) FailSidecarCollision(configPath);
             if ([entry[@"enabled"] isEqual:@YES]) return NO;
+            if ([entry[@"enabled"] isEqual:@NO] && [CCBridgeOptions()[@"antigravityApp"] boolValue])
+                return NO; // Preserve a user's disabled Sidecar on an ordinary refresh.
             entries = entries ?: [CCPetsJSONObject new];
             entry = entry ?: [CCPetsJSONObject new];
             entry[@"enabled"] = @YES;
@@ -450,7 +514,8 @@ NSArray<NSString *> *CCPetsConfigureAntigravityAppSidecar(NSDictionary *profile,
             return YES;
         });
 
-        if (!enabled) {
+        if (!enabled && !keep) {
+            if (![[NSData dataWithContentsOfFile:manifestPath] isEqual:manifest.sourceData]) FailSidecarCollision(manifestPath);
             if (unlink(manifestPath.fileSystemRepresentation) != 0 && errno != ENOENT) {
                 NSError *removeError = [NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil];
                 [NSException raise:@"CCPetsAntigravityConfig" format:@"%@: %@", manifestPath, removeError.localizedDescription];

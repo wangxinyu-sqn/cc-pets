@@ -494,9 +494,8 @@ static const CGFloat SessionStateWidth = 92, SessionDoingWidth = 256, SessionTim
 
 - (void)viewDidAppear {
     [super viewDidAppear];
-    [WorkbenchSource() markWorkbenchMessagesSeen];
     [self.timer invalidate];
-    // 最近活动的"几分钟前"和 Bridge 消息要走表才会更新；会话状态本身有通知，不靠它。
+    // 最近活动的"几分钟前"要走表才会更新；会话状态本身有通知，不靠它。
     __weak typeof(self) weakSelf = self;
     self.timer = [NSTimer scheduledTimerWithTimeInterval:5 repeats:YES block:^(NSTimer *timer) {
         CCPetsSessionsPage *page = weakSelf;
@@ -525,29 +524,17 @@ static const CGFloat SessionStateWidth = 92, SessionDoingWidth = 256, SessionTim
 - (void)render {
     id<CCPetsWorkbenchSource> source = WorkbenchSource();
     NSArray<NSDictionary *> *sessions = [source workbenchSessions] ?: @[];
-    NSDictionary *messages = [source workbenchMessages] ?: @{};
-    NSArray *deliveries = messages[@"deliveries"] ?: @[];
-    NSArray *pending = messages[@"pending"] ?: @[];
     NSMutableArray<NSString *> *times = [NSMutableArray array];
     for (NSDictionary *session in sessions) [times addObject:RelativeTime([session[@"updatedAt"] doubleValue])];
-    NSArray *state = @[sessions, messages, times];
+    NSArray *state = @[sessions, times];
     if ([state isEqual:self.renderedState]) return;
     self.renderedState = state;
-    NSUInteger waiting = 0;
-    for (NSDictionary *entry in pending) waiting += [entry[@"count"] unsignedIntegerValue];
-    NSMutableArray<NSString *> *summary = [NSMutableArray arrayWithObject:sessions.count == 1
-        ? L(@"1 session online") : [NSString stringWithFormat:L(@"%ld sessions online"), (long)sessions.count]];
-    if ([messages[@"enabled"] boolValue]) {
-        [summary addObject:[NSString stringWithFormat:L(@"%lu CC Bridge messages recently"), (unsigned long)deliveries.count]];
-    }
-    self.form.subtitleLabel.stringValue = [summary componentsJoinedByString:@" · "];
+    self.form.subtitleLabel.stringValue = sessions.count == 1 ? L(@"1 session online")
+        : [NSString stringWithFormat:L(@"%ld sessions online"), (long)sessions.count];
 
     NSPoint scroll = self.form.scrollView.contentView.bounds.origin;
     [self.form removeAllContent];
     [self.form addView:[self sessionsTable:sessions]];
-    [self.form addGroupTitle:@"CC Bridge" note:waiting > 0 ? [NSString stringWithFormat:L(@"%lu waiting in an inbox"),
-        (unsigned long)waiting] : nil info:L(@"Only message exchanges are displayed")];
-    [self.form addView:[self messagesCard:messages]];
     // 定时重排不要把用户滚到一半的位置弹回顶部。
     [self.form.scrollView.documentView layoutSubtreeIfNeeded];
     [self.form.scrollView.contentView scrollToPoint:scroll];
@@ -685,114 +672,6 @@ static const CGFloat SessionStateWidth = 92, SessionDoingWidth = 256, SessionTim
             [actionCell.heightAnchor constraintEqualToAnchor:jump.heightAnchor],
         ]];
         [rows addObject:[self sessionRowWithCells:@[chip, nameCell, doing, time, actionCell] height:50]];
-    }
-    return [self cardWithRows:rows];
-}
-
-#pragma mark 消息
-
-- (NSView *)messageRowWithLeading:(NSView *)leading title:(NSView *)title detail:(NSView *)detail
-    trailing:(NSArray<NSView *> *)trailing {
-    NSView *row = [NSView new];
-    NSStackView *right = [NSStackView stackViewWithViews:trailing];
-    right.spacing = 8;
-    right.alignment = NSLayoutAttributeCenterY;
-    [right setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
-    [right setContentCompressionResistancePriority:NSLayoutPriorityRequired
-        forOrientation:NSLayoutConstraintOrientationHorizontal];
-    for (NSView *view in @[leading, title, detail, right]) {
-        view.translatesAutoresizingMaskIntoConstraints = NO;
-        [row addSubview:view];
-        [view.centerYAnchor constraintEqualToAnchor:row.centerYAnchor].active = YES;
-    }
-    [title setContentHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
-    [detail setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
-        forOrientation:NSLayoutConstraintOrientationHorizontal];
-    [NSLayoutConstraint activateConstraints:@[
-        [row.heightAnchor constraintEqualToConstant:40],
-        [leading.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:14],
-        [leading.widthAnchor constraintEqualToConstant:44],
-        // 标题不设宽度上限：右边空着时名字能完整显示，最宽只到 detail / 右侧按钮之前。
-        [title.leadingAnchor constraintEqualToAnchor:leading.trailingAnchor constant:8],
-        [detail.leadingAnchor constraintEqualToAnchor:title.trailingAnchor constant:12],
-        [detail.trailingAnchor constraintLessThanOrEqualToAnchor:right.leadingAnchor constant:-12],
-        [right.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-14],
-    ]];
-    return row;
-}
-
-// 发件人 → 收件人，名字加粗，箭头淡一些。
-- (NSTextField *)routeFrom:(NSString *)from to:(NSString *)to {
-    NSMutableAttributedString *text = [NSMutableAttributedString new];
-    NSDictionary *strong = @{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold],
-                             NSForegroundColorAttributeName: CCPetsInkColor()};
-    [text appendAttributedString:[[NSAttributedString alloc] initWithString:from ?: @"" attributes:strong]];
-    [text appendAttributedString:[[NSAttributedString alloc] initWithString:@"  →  " attributes:@{
-        NSFontAttributeName: [NSFont systemFontOfSize:12], NSForegroundColorAttributeName: CCPetsTertiaryInkColor()}]];
-    [text appendAttributedString:[[NSAttributedString alloc] initWithString:to ?: @"" attributes:strong]];
-    // 富文本标签默认会折行；这里一律单行，名字太长就在末尾省略，不把"→ 收件人"挤到第二行。
-    // 抗压缩优先级比右边的说明高：位置不够时先让说明让位。
-    NSMutableParagraphStyle *paragraph = [NSMutableParagraphStyle new];
-    paragraph.lineBreakMode = NSLineBreakByTruncatingTail;
-    [text addAttribute:NSParagraphStyleAttributeName value:paragraph range:NSMakeRange(0, text.length)];
-    NSTextField *label = [NSTextField labelWithAttributedString:text];
-    label.usesSingleLineMode = YES;
-    label.cell.wraps = NO;
-    label.maximumNumberOfLines = 1;
-    label.lineBreakMode = NSLineBreakByTruncatingTail;
-    // 窗口太窄仍被截断时，悬停能看到完整的发件人和收件人。
-    label.toolTip = [NSString stringWithFormat:@"%@ → %@", from ?: @"", to ?: @""];
-    [label setContentCompressionResistancePriority:NSLayoutPriorityDefaultHigh
-        forOrientation:NSLayoutConstraintOrientationHorizontal];
-    return label;
-}
-
-- (NSView *)messagesCard:(NSDictionary *)messages {
-    NSMutableArray<NSView *> *rows = [NSMutableArray array];
-    if (![messages[@"enabled"] boolValue]) {
-        NSView *row = [CCPetsFormBuilder rowWithTitle:L(@"CC Bridge is off")
-            subtitle:L(@"Turn it on from the pet's right-click menu to let sessions message each other.") controls:@[]];
-        return [self cardWithRows:@[row]];
-    }
-    for (NSDictionary *entry in messages[@"pending"]) {
-        NSString *session = entry[@"session"];
-        NSUInteger count = [entry[@"count"] unsignedIntegerValue];
-        NSTextField *icon = CCPetsLabel(@"", 12, NSFontWeightRegular, CCPetsTertiaryInkColor());
-        NSTextField *name = CCPetsLabel(entry[@"displayName"] ?: entry[@"name"], 12, NSFontWeightSemibold, CCPetsInkColor());
-        NSTextField *detail = CCPetsLabel(count == 1 ? L(@"1 message waiting. Say anything in that terminal to deliver it.")
-            : [NSString stringWithFormat:L(@"%lu messages waiting. Say anything in that terminal to deliver them."),
-                (unsigned long)count], 12, NSFontWeightRegular, CCPetsSecondaryInkColor());
-        CCPetsChipView *chip = [[CCPetsChipView alloc] initWithText:L(@"Waiting") kind:CCPetsStatusWarn];
-        NSButton *jump = ActionButton(L(@"Go to Terminal"), YES, ^{
-            [WorkbenchSource() focusBridgeSessionWithID:session];
-        });
-        [rows addObject:[self messageRowWithLeading:icon title:name detail:detail trailing:@[chip, jump]]];
-    }
-    NSArray *deliveries = messages[@"deliveries"];
-    for (NSDictionary *delivery in deliveries) {
-        NSDate *date = [NSDate dateWithTimeIntervalSince1970:[delivery[@"at"] doubleValue]];
-        NSTextField *time = CCPetsNumberLabel([NSDateFormatter localizedStringFromDate:date
-            dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterShortStyle], 12, NSFontWeightRegular,
-            CCPetsTertiaryInkColor());
-        NSTextField *route = [self routeFrom:CCBridgeSessionDisplayName(delivery[@"fromIdentity"])
-            to:CCBridgeSessionDisplayName(delivery[@"toIdentity"])];
-        NSString *locations = [NSString stringWithFormat:@"%@ → %@",
-            [delivery[@"fromIdentity"][@"remote"] boolValue] ? L(@"Remote") : L(@"Local"),
-            [delivery[@"toIdentity"][@"remote"] boolValue] ? L(@"Remote") : L(@"Local")];
-        NSTextField *detail = CCPetsLabel(locations, 12, NSFontWeightRegular, CCPetsSecondaryInkColor());
-        BOOL unseen = [delivery[@"unseen"] boolValue];
-        CCPetsChipView *chip = [[CCPetsChipView alloc] initWithText:unseen ? L(@"Unread") : L(@"Delivered")
-            kind:unseen ? CCPetsStatusWork : CCPetsStatusOK];
-        NSDictionary *terminalIdentity = delivery[@"terminalIdentity"];
-        NSString *session = terminalIdentity[@"session"];
-        NSButton *jump = ActionButton(L(@"Go to Terminal"), NO, ^{
-            [WorkbenchSource() focusBridgeSessionWithID:session];
-        });
-        jump.toolTip = [NSString stringWithFormat:L(@"Jump to %@'s terminal"), CCBridgeSessionDisplayName(terminalIdentity)];
-        [rows addObject:[self messageRowWithLeading:time title:route detail:detail trailing:@[chip, jump]]];
-    }
-    if (rows.count == 0) {
-        [rows addObject:[CCPetsFormBuilder rowWithTitle:L(@"No messages recently") controls:@[]]];
     }
     return [self cardWithRows:rows];
 }

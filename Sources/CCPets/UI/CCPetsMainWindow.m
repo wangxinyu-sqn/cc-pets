@@ -1,4 +1,5 @@
 #import "CCPetsMainWindow.h"
+#import "CCPetsBridgePage.h"
 #import "CCPetsL10n.h"
 #import "CCPetsPreferences.h"
 #import "CCPetsDiagnosticsPage.h"
@@ -9,6 +10,7 @@
 
 NSString *const CCPetsMainWindowPageOverview = @"overview";
 NSString *const CCPetsMainWindowPageSessions = @"sessions";
+NSString *const CCPetsMainWindowPageBridge = @"bridge";
 NSString *const CCPetsMainWindowPageUsage = @"usage";
 NSString *const CCPetsMainWindowPagePet = @"pet";
 NSString *const CCPetsMainWindowPageAccounts = @"accounts";
@@ -42,6 +44,8 @@ static NSArray<NSDictionary *> *MainWindowPages(void) {
           @"group": @"workbench", @"class": CCPetsOverviewPage.class},
         @{@"id": CCPetsMainWindowPageSessions, @"title": L(@"Sessions"), @"symbol": @"terminal",
           @"group": @"workbench", @"class": CCPetsSessionsPage.class},
+        @{@"id": CCPetsMainWindowPageBridge, @"title": L(@"Bridge"), @"symbol": @"point.3.connected.trianglepath.dotted",
+          @"group": @"workbench", @"class": CCPetsBridgePage.class},
         @{@"id": CCPetsMainWindowPageUsage, @"title": L(@"Usage"), @"symbol": @"chart.bar",
           @"group": @"workbench", @"class": CCPetsUsagePage.class},
         @{@"id": CCPetsMainWindowPagePet, @"title": L(@"Pet"), @"symbol": @"pawprint",
@@ -525,6 +529,11 @@ static CCPetsMainWindowController *SharedMainWindow;
 static id WindowCloseObserver;
 
 @implementation CCPetsMainWindowController
+
++ (void)presentBridgeSettings {
+    [self presentPage:CCPetsMainWindowPageBridge];
+    [(CCPetsBridgePage *)SharedMainWindow.pageController showSettings];
+}
 
 + (void)presentPage:(NSString *)page {
     if (!SharedMainWindow) SharedMainWindow = [CCPetsMainWindowController new];

@@ -926,6 +926,66 @@ exit 0
   store.setBridgeEnabled(true);
 }
 
+// 桌面授权在管理块之外，包括已被旧版写坏的重复表。走完整安装的两个原生命令。
+{
+  const config = path.join(env.CODEX_HOME, "config.toml");
+  const options = { codexApprove: ["list_agents", "send_message"], tabTitle: true, wake: false };
+  const extraEnv = { CC_BRIDGE_SKIP_MCP: "0", CLAUDE_REAL_BIN: path.join(root, "bin/claude-noop") };
+  const bridge = (...args) => {
+    const result = runCli(args, { extraEnv });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+  };
+  const reinstall = () => {
+    const repair = spawnSync(binary, ["profile", "repair-all", "--pet-hooks-only"], {env: {...env, ...extraEnv}, encoding: "utf8"});
+    assert.equal(repair.status, 0, repair.stdout + repair.stderr);
+    bridge("refresh");
+  };
+  const rule = '[mcp_servers.cc-bridge.tools.send_message]\napproval_mode = "approve"';
+  const duplicate = '# <<< cc-bridge <<<\n\n# >>> cc-bridge >>>\n' + rule + '\n\n# <<< cc-bridge <<<\n';
+  const original = '# user comment\nmodel = "x"\n\n[mcp_servers.cc-bridge]\ncommand = "/old/cc-pets" # path\n' +
+    'args = [\n  "bridge", "mcp",\n]\n[mcp_servers.cc-bridge.env]\nKEEP = "用户设置"\n';
+  for (const fixture of [
+    original + rule + '\n' + duplicate,
+    `"mcp_servers".'cc-bridge'.tools.send_message.approval_mode = "prompt" # manual\n`,
+    'mcp_servers = { other = {command="keep"}, "cc-bridge" = {tools={send_message={approval_mode="prompt"}}} }\n'
+  ]) {
+    fs.writeFileSync(config, fixture, {mode: 0o600});
+    store.setBridgeEnabled(true, options);
+    reinstall();
+    const first = fs.readFileSync(config, "utf8");
+    assert.equal((first.match(/send_message/g) || []).length, 1, first);
+    assert.match(first, /list_agents/);
+    if (fixture.startsWith(original)) {
+      assert.ok(first.includes(rule));
+      assert.ok(first.includes('KEEP = "用户设置"'));
+      assert.ok(first.includes(' # path'));
+    } else assert.match(first, /"prompt"/);
+    const inode = fs.statSync(config, {bigint:true}).ino;
+    reinstall();
+    assert.equal(fs.readFileSync(config, "utf8"), first);
+    assert.equal(fs.statSync(config, {bigint:true}).ino, inode, "second install should skip writing");
+    assert.equal(store.readBridgeOptions().tabTitle, true);
+    bridge("disable");
+    const disabled = fs.readFileSync(config, "utf8");
+    assert.match(disabled, /send_message/);
+    assert.doesNotMatch(disabled, /list_agents/);
+    assert.match(disabled, /enabled\s*=\s*false/);
+    bridge("enable", "--codex-approve=list_agents,send_message", "--wake=off");
+    assert.doesNotMatch(fs.readFileSync(config, "utf8"), /enabled\s*=\s*false/);
+  }
+  fs.writeFileSync(config, '[mcp_servers.cc-bridge]\ncommand = "/previous/cc-pets"\nargs=["bridge","mcp"]\ndefault_tools_approval_mode = "prompt"\n');
+  bridge("refresh");
+  bridge("disable");
+  assert.match(fs.readFileSync(config, "utf8"), /default_tools_approval_mode = "prompt"/);
+  store.setBridgeEnabled(true, options);
+  const unrelatedConflict = '[projects.example]\ntrust_level="trusted"\n[projects.example]\n';
+  fs.writeFileSync(config, unrelatedConflict);
+  assert.equal(runCli(["refresh"], {extraEnv}).status, 1);
+  assert.equal(fs.readFileSync(config, "utf8"), unrelatedConflict, "invalid user TOML must be preserved");
+  fs.writeFileSync(config, 'model = "x"\n');
+  store.setBridgeEnabled(true);
+}
+
 // 26. 显式 session_id 被拒绝时说明原因。
 {
   const host = fakeAgent("codex");
@@ -1115,6 +1175,8 @@ exit 0
     return runCli(["disable"], { extraEnv: { CC_BRIDGE_SKIP_MCP: "0" } });
   };
   for (const unrelated of [
+    '[mcp_servers.cc-bridge]\ncommand = "/usr/bin/other"\nargs = ["bridge","mcp"]\n',
+    '[[mcp_servers.cc-bridge.items]]\ncommand = "x"\n',
     '[projects."/Users/me/cc-bridge"]\ntrust_level = "trusted"\n',
     '[mcp_servers.my-cc-bridge-tools]\ncommand = "cc-bridge"\n',
     '[mcp_servers.other.env]\ncc-bridge = "1"\n',
@@ -1122,34 +1184,36 @@ exit 0
     'mcp_servers = { other = { cc-bridge = 1, note = "cc-bridge = 1" } }\n',
     // 单引号键是字面量，这里的 - 不是连字符。
     "['mcp_servers'.'cc\\u002dbridge']\ncommand = 'x'\n",
-    // 不合法的转义不解码，也就不等于 cc-bridge。
-    '["mcp_servers"."cc\\uZZZZbridge"]\ncommand = "x"\n'
   ]) {
     fs.writeFileSync(configPath, unrelated);
     const result = disableWithMcp();
     assert.equal(result.status, 0, `不应误报：${unrelated}\n${result.stdout}`);
+    assert.equal(fs.readFileSync(configPath, "utf8"), unrelated);
   }
-  // 假 codex 的 mcp remove 总是失败，所以“没能移除”的报错证明确实认出了声明。
+  const invalid = '["mcp_servers"."cc\\uZZZZbridge"]\ncommand = "x"\n';
+  fs.writeFileSync(configPath, invalid);
+  assert.equal(disableWithMcp().status, 1, "TOML 解析失败时中止");
+  assert.equal(fs.readFileSync(configPath, "utf8"), invalid);
+
   for (const declared of [
-    '["mcp_servers"."cc-bridge"]\ncommand = "x"\n',
-    '["mcp_servers"."cc\\u002dbridge"]\ncommand = "x"\n',
-    '["mcp_servers"."cc\\U0000002dbridge"]\ncommand = "x"\n',
-    '"mcp\\u005fservers".cc-bridge.command = "x"\n',
-    'mcp_servers = { "cc\\u002dbridge" = { command = "x" } }\n',
-    "[ 'mcp_servers' . cc-bridge ]\ncommand = 'x'\n",
-    '[["mcp_servers"."cc-bridge".items]]\ncommand = "x"\n',
-    '"mcp_servers".cc-bridge.command = "x"\n',
-    '"mcp_servers" = { "other" = {}, "cc-bridge" = { command = "x" } }\n',
-    '[mcp_servers.cc-bridge]\ncommand = "x"\n',
-    '[mcp_servers."cc-bridge"]\ncommand = "x"\n',
-    '[mcp_servers]\ncc-bridge = { command = "x" }\n',
-    'mcp_servers.cc-bridge.command = "x"\n',
-    'mcp_servers = { cc-bridge = { command = "x" } }\n'
+    '["mcp_servers"."cc-bridge"]\ncommand = "/old/cc-pets"\nargs = ["bridge","mcp"]\n',
+    '["mcp_servers"."cc\\u002dbridge"]\ncommand = "/old/cc-pets"\nargs = ["bridge","mcp"]\n',
+    '["mcp_servers"."cc\\U0000002dbridge"]\ncommand = "/old/cc-pets"\nargs = ["bridge","mcp"]\n',
+    '"mcp\\u005fservers".cc-bridge.command = "/old/cc-pets"\nmcp_servers.cc-bridge.args = ["bridge","mcp"]\n',
+    'mcp_servers = { "cc\\u002dbridge" = { command = "/old/cc-pets", args = ["bridge","mcp"] } }\n',
+    "[ 'mcp_servers' . cc-bridge ]\ncommand = '/old/cc-pets'\nargs=['bridge','mcp']\n",
+    '"mcp_servers".cc-bridge.command = "/old/cc-pets"\nmcp_servers.cc-bridge.args = ["bridge","mcp"]\n',
+    '"mcp_servers" = { "other" = {}, "cc-bridge" = { command = "/old/cc-pets", args = ["bridge","mcp"] } }\n',
+    '[mcp_servers.cc-bridge]\ncommand = "/old/cc-pets"\nargs = ["bridge","mcp"]\n',
+    '[mcp_servers."cc-bridge"]\ncommand = "/old/cc-pets"\nargs = ["bridge","mcp"]\n',
+    '[mcp_servers]\ncc-bridge = { command = "/old/cc-pets", args = ["bridge","mcp"] }\n',
+    'mcp_servers.cc-bridge.command = "/old/cc-pets"\nmcp_servers.cc-bridge.args = ["bridge","mcp"]\n',
+    'mcp_servers = { cc-bridge = { command = "/old/cc-pets", args = ["bridge","mcp"] } }\n'
   ]) {
     fs.writeFileSync(configPath, declared);
     const result = disableWithMcp();
-    assert.equal(result.status, 1, `应识别出声明：${declared}`);
-    assert.match(result.stdout, /cc-bridge/);
+    assert.equal(result.status, 0, `应原生移除声明：${declared}\n${result.stdout}`);
+    assert.doesNotMatch(fs.readFileSync(configPath, "utf8"), /cc-bridge|command|\\u00/, "已移除目标服务");
   }
   fs.writeFileSync(configPath, 'model = "x"\n');
   store.setBridgeEnabled(true);

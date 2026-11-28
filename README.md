@@ -238,7 +238,7 @@ cc-pets --status              # Print parsed Codex quota data.
 cc-pets --history             # Print local quota history as JSON.
 cc-pets clean                 # Remove rebuildable state and caches.
 cc-pets doctor                # Check the installation and integrations, with fixes.
-cc-pets open [page]           # Open the Main menu (pages: overview, sessions, usage, pet, accounts, alerts, general, diagnostics).
+cc-pets open [page]           # Open the Main menu (pages: overview, sessions, bridge, usage, pet, accounts, alerts, general, diagnostics).
 cc-pets paths                 # List where settings, caches and data are stored.
 
 cc-pets pet search otter      # Search the configured asset source.
@@ -344,6 +344,7 @@ window for your sessions, usage and settings. Open it from the right-click menu
 cc-pets open               # the page you used last
 cc-pets open overview
 cc-pets open sessions
+cc-pets open bridge
 cc-pets open usage
 cc-pets open accounts
 cc-pets open general       # also: pet, accounts, alerts, diagnostics
@@ -354,7 +355,7 @@ cc-pets open general       # also: pet, accounts, alerts, diagnostics
 </p>
 
 - **Sidebar** — the current pet, animated, with its status, then two groups: **Workbench**
-  (Overview, Sessions, Usage, Pet, Multi-Account) and **General** (Alerts,
+  (Overview, Sessions, Bridge, Usage, Pet, Multi-Account) and **General** (Alerts,
   Settings). Diagnostics sits at the bottom with a badge when something needs fixing.
 - **Overview** — the pet and what it is doing, today's total usage with input, output, cached input and requests,
   a notice when diagnostics found problems, and compact account cards using the hover
@@ -369,8 +370,8 @@ cc-pets open general       # also: pet, accounts, alerts, diagnostics
   display. Unknown authentication keeps manual switching available. Detection runs in the
   background without retaining keys or authentication command output.
 - **Sessions** — the Agent sessions online right now (sessions waiting for
-  approval first, each with **Go to Terminal**) and CC Bridge traffic: messages waiting in
-  an inbox and recent deliveries. Only who sent what to whom is shown, never the message.
+  approval first, each with **Go to Terminal**).
+- **Bridge** — recent message activity, Slack remote connections, session behavior, tool approvals and message alerts.
 - **Usage** — local Claude Code, Codex, Antigravity CLI, and Antigravity App token usage for the last 7, 30 or 90 days. The All view includes every source, and Antigravity CLI and App each have a separate filter. The same
   five numbers as the overview lead the page: total usage (input + cache write + output +
   cached input + background usage), input, output, cached input with its hit rate, and requests. Background usage from local Codex SQLite logs contributes to the total only, without an inferred token breakdown. The daily bar
@@ -383,10 +384,8 @@ cc-pets open general       # also: pet, accounts, alerts, diagnostics
   picker, deletion of unselected custom pets with confirmation, size, chatter, click reactions and Codex import; Alerts: notifications, the status
   card and system status; Settings: language, display location, panel appearance, the hover panel's quota card order and the pet sprites folder), plus finer controls such as the click-reaction thresholds and a
   continuous glass dimming slider (the menu keeps its four presets). Changes apply to the
-  desktop pet immediately, and changes made in the menu show up here. Options that rewrite
-  Claude Code / Codex configuration (enabling CC Bridge, auto-approve) stay in the
-  right-click menu. The right-click menu keeps only the everyday items: Pets, Pet Size,
-  Show Status Card, Usage Display, Panel Theme and CC Bridge.
+  desktop pet immediately, and changes made in the menu show up here. The right-click menu keeps only the everyday items: Pets, Pet Size,
+  Show Status Card, Usage Display and Panel Theme.
 - **Diagnostics** — the same checks as `cc-pets doctor`, problems first: each with its area,
   the suggested fix command and a copy button. Passing checks fold into one line. The PATH
   order check only points you to `cc-pets doctor` in a terminal, since the pet's own PATH
@@ -422,7 +421,7 @@ menu bar status icon follows Settings → Show In independently of this window.
   first one in the session list, so the next click goes to the next one). ⌥-click still opens
   the panel, and the panel opens as usual when that session's terminal can't be resolved.
 - **Right-click** (or Control-click) opens the same menu as right-clicking the pet, including
-  the CC Bridge switches and **Quit**.
+  **Main menu** and **Quit**.
 - The icon is an outlined terminal window with a `>_` prompt that takes the status card's color:
   normal menu bar color while idle, blue while an agent works, green after a task completes and
   red after a failure. Awaiting approval, the only state that needs you, shows orange `•••`. It returns to the normal

@@ -4,9 +4,6 @@ set -eu
 SCRIPT_DIR="${0:A:h}"
 PROJECT_DIR="${SCRIPT_DIR:h}"
 source "${PROJECT_DIR}/scripts/i18n.zsh"
-LAUNCHER="${PROJECT_DIR}/bin/codex-with-pet"
-CLAUDE_LAUNCHER="${PROJECT_DIR}/bin/claude-with-pet"
-AGY_LAUNCHER="${PROJECT_DIR}/bin/agy-with-pet"
 SHELL_RC="${ZDOTDIR:-${HOME}}/.zshrc"
 SHIM_DIR="${CC_PETS_SHIM_DIR:-${HOME}/.cc-pets/shims}"
 SHIM_START_MARKER="# >>> cc-pets-shims >>>"
@@ -32,7 +29,7 @@ PET_BINARY="${PROJECT_DIR}/.build/release/cc-pets"
 "${PET_BINARY}" --uninstall-integrations --prepare-install "${SHELL_RC}"
 "${PROJECT_DIR}/scripts/install-app.sh"
 # 安装/升级适配官方默认 Home，并修复用户明确登记过的自定义 Home。
-"${PET_BINARY}" profile repair-all || \
+"${PET_BINARY}" profile repair-all --pet-hooks-only || \
   print -u2 "$(cc_pets_t "Some registered Agent profiles need repair; open Multi-Account in the Main menu and retry.")"
 "${PET_BINARY}" --configure-updater
 # CC Bridge 默认关闭；用户开启过的话，包路径可能随升级变化，按原选项重写一遍集成。
@@ -68,14 +65,20 @@ fi
 # 用户敲 Claude / CODEX 时 zsh 找不到同名 alias，就直接从 PATH 里命中真二进制，
 # 桌宠不会被拉起。改成 PATH 前置的 shim 目录后，任意大小写写法都会命中同一个文件。
 mkdir -p "${SHIM_DIR}"
-ln -sfn "${LAUNCHER}" "${SHIM_DIR}/codex"
-ln -sfn "${CLAUDE_LAUNCHER}" "${SHIM_DIR}/claude"
-if [[ ! -e "${SHIM_DIR}/agy" && ! -L "${SHIM_DIR}/agy" ]] || \
-   [[ -L "${SHIM_DIR}/agy" && "$(readlink "${SHIM_DIR}/agy")" == */bin/agy-with-pet ]]; then
-  ln -sfn "${AGY_LAUNCHER}" "${SHIM_DIR}/agy"
-fi
+for name in codex claude agy; do
+  shim="${SHIM_DIR}/${name}"
+  launcher="${PROJECT_DIR}/bin/${name}-with-pet"
+  if [[ -L "${shim}" ]]; then
+    previous="$(readlink "${shim}")"
+    [[ "${previous}" == "${launcher}" || "${previous}" != */bin/${name}-with-pet ]] && continue
+  elif [[ -e "${shim}" ]]; then
+    continue
+  fi
+  ln -sfn "${launcher}" "${shim}"
+done
 
-if ! grep -Fq "${SHIM_START_MARKER}" "${SHELL_RC}" 2>/dev/null; then
+if ! grep -Fxq "${SHIM_START_MARKER}" "${SHELL_RC}" 2>/dev/null &&
+   ! grep -Fxq "path=(${(q)SHIM_DIR} \$path)" "${SHELL_RC}" 2>/dev/null; then
   {
     print ""
     print "${SHIM_START_MARKER}"

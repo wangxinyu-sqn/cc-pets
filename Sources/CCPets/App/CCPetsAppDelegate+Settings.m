@@ -287,7 +287,6 @@
 }
 - (void)languageDidChange:(NSNotification *)notification {
     PetPhrasesAdoptLanguageDefaults();
-    NSApp.mainMenu = nil;
     [self installMainMenu];
     self.quotaView.needsDisplay = YES;
     // 状态卡标题和副行都是按状态现算的，按最后的状态重排一遍。工具名没留，

@@ -1,5 +1,4 @@
 #import "CCPetsSettingsPage.h"
-#import "CCPetsBridge.h"
 #import "CCPetsCLISupport.h"
 #import "CCPetsDiagnosticsPage.h"
 #import "CCPetsFormBuilder.h"
@@ -819,16 +818,14 @@ static const NSUInteger PetPickerColumns = 4;
             key:NotificationStallKey],
     ] footer:nil];
 
-    // CC Bridge 这里只放只影响桌宠的两项；启用和免审批会改 Claude Code / Codex 的配置，仍在右键菜单里。
     [self.form addGroupWithTitle:L(@"Desktop Status Card") rows:@[
         [self switchRowWithTitle:L(@"Show Status Card") subtitle:L(@"The card next to the pet while an Agent is working")
             key:StatusBubbleExpandedKey
             apply:^(id<CCPetsSettingsActions> actions, BOOL enabled) { [actions updateStatusBubbleExpanded:enabled]; }],
-        [self switchRowWithTitle:L(@"CC Bridge unread badge") subtitle:nil key:BridgeBadgeEnabledKey
-            apply:^(id<CCPetsSettingsActions> actions, BOOL enabled) { [actions updateBridgeBadgeEnabled:enabled]; }],
-        [self notificationRowWithTitle:L(@"CC Bridge message notifications")
-            subtitle:L(@"Only who sent it to whom, never the message") key:BridgeNotificationKey],
-    ] footer:L(@"Enabling CC Bridge, auto-approve and other options that change Claude Code / Codex settings stay in the pet's right-click menu.")];
+        [CCPetsFormBuilder rowWithTitle:L(@"Pet alerts") controls:@[
+            [self smallButtonWithTitle:L(@"Manage Bridge alerts…") action:^{ [CCPetsMainWindowController presentBridgeSettings]; }]
+        ]],
+    ] footer:nil];
 }
 
 @end

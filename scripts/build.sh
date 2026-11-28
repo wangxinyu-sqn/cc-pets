@@ -22,9 +22,9 @@ if [[ "${CC_PETS_STRICT:-0}" == "1" ]]; then
   WARNING_FLAGS+=(-Werror)
 fi
 
-# 源码按模块分子目录存放：递归收集 .m，并把每个含头文件的目录加进 -I，
+# 源码按模块分子目录存放：递归收集 .m 和 .c，并把每个含头文件的目录加进 -I，
 # 这样 #import "CCPetsXxx.h" 不用写相对路径，文件挪目录也不用改这里。
-SOURCES=("${PROJECT_DIR}"/Sources/CCPets/**/*.m(N))
+SOURCES=("${PROJECT_DIR}"/Sources/CCPets/**/*.(m|c)(N))
 HEADERS=("${PROJECT_DIR}"/Sources/CCPets/**/*.h(N))
 INCLUDE_FLAGS=(-I${^${(u)HEADERS:h}})
 if (( ${#SOURCES[@]} == 0 )); then
@@ -43,7 +43,7 @@ CLANG_MODULE_CACHE_PATH="${CACHE_DIR}" cc_pets_compile \
   -framework Cocoa \
   -framework CoreServices \
   -framework ImageIO \
-  -framework IOKit \
+  -framework Security -framework IOKit \
   -framework QuartzCore \
   -framework UserNotifications \
   -lsqlite3 \
@@ -85,6 +85,8 @@ for LPROJ_DIR in "${PROJECT_DIR}"/Resources/*.lproj(N/); do
   cp -R "${LPROJ_DIR}" "${BUILD_DIR}/${LPROJ_DIR:t}"
 done
 cc_pets_publish_binary "${BUILD_DIR}/cc-pets" "${APP_MACOS_DIR}/cc-pets"
+cp "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md" "${APP_RESOURCES_DIR}/THIRD_PARTY_NOTICES.md"
+rm -f "${APP_RESOURCES_DIR}/tomlc17-LICENSE.txt"
 cp "${PROJECT_DIR}/Resources/Info.plist" "${APP_DIR}/Contents/Info.plist"
 cp "${PROJECT_DIR}/Resources/AppIcon.icns" "${APP_RESOURCES_DIR}/AppIcon.icns"
 /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string ${PACKAGE_VERSION}" "${APP_DIR}/Contents/Info.plist"

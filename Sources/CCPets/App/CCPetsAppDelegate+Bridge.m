@@ -2,6 +2,7 @@
 #import "CCPetsAppDelegate+Private.h"
 #import "CCPetsBridgeStore.h"
 #import "CCPetsBridgeSlack.h"
+#import "CCPetsSlackConfiguration.h"
 #import "CCPetsCLISupport.h"
 
 @implementation AppDelegate (Bridge)
@@ -12,7 +13,7 @@
     successMessage:(NSString *)successMessage {
     NSDictionary<NSString *, NSString *> *locator = CCBridgeCLILocator();
     if (!locator) {
-        [self showAlertWithTitle:L(@"Can't Change CC Bridge Settings")
+        [self showAlertWithTitle:L(@"Can't Change Bridge Settings")
             message:L(@"The cc-pets command-line tool wasn't found. Run cc-pets install in a terminal, then try again.")];
         [self syncBridgeSwitch:sender];
         return;
@@ -55,7 +56,7 @@
             }
             [strongSelf syncBridgeSwitch:sender];
             NSString *detail = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-            [strongSelf showAlertWithTitle:L(@"CC Bridge Setup Failed")
+            [strongSelf showAlertWithTitle:L(@"Bridge Setup Failed")
                 message:detail.length > 0 ? detail : L(@"The command failed.")];
         });
     };
@@ -63,7 +64,7 @@
     if (![task launchAndReturnError:&error]) {
         self.bridgeCommandRunning = NO;
         [self syncBridgeSwitch:sender];
-        [self showAlertWithTitle:L(@"CC Bridge Setup Failed") message:error.localizedDescription];
+        [self showAlertWithTitle:L(@"Bridge Setup Failed") message:error.localizedDescription];
     }
 }
 // 与其他菜单开关一致：目标状态按"实际存储的状态取反"算，不信任开关视图自己翻转后的 state——
@@ -166,11 +167,20 @@
     }
     if (self.slackConfigRevision != revision && ![self.slackConfigRevision isEqual:revision]) {
         self.slackConfigRevision = revision;
-        self.slackAutoStart = revision && CCBridgeSlackAutoStartEnabled();
-        self.slackRetryAt = 0;
-        [self stopManagedSlackAdapter];
+        // A successful explicit save can authorize the same two items without changing their values.
+        if (self.managedSlackTask && !self.managedSlackTask.running) {
+            self.managedSlackTask = nil;
+            self.slackRetryAt = 0;
+        }
+        NSDictionary *slack = revision ? CCBridgeSlackLoadConfiguration(CCBridgeSlackConfigPath()) : nil;
+        if (slack != self.slackConfiguration && ![slack isEqual:self.slackConfiguration]) {
+            self.slackConfiguration = slack;
+            self.slackAutoStart = CCBridgeSlackAutoStartEnabled(slack);
+            self.slackRetryAt = 0;
+            [self stopManagedSlackAdapter];
+        }
     }
-    if (self.managedSlackTask.running) return;
+    if (self.managedSlackTask.running || self.managedSlackTask.terminationStatus == CCBridgeSlackKeychainAccessRequired) return;
     self.managedSlackTask = nil;
     NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
     if (!self.slackAutoStart || now < self.slackRetryAt) return;

@@ -79,7 +79,7 @@
 // 编辑项的 action 一律留给响应者链（target 为 nil），谁是第一响应者谁处理——写死 target 的话
 // 编辑器之外的文本框就用不上了。没有「隐藏」：hide: 会把桌宠浮窗一起藏起来。
 - (void)installMainMenu {
-    if (NSApp.mainMenu) return;
+    // AppKit 可能已创建只有应用项的菜单，仍需要装入完整的编辑快捷键。
     NSMenu *mainMenu = [NSMenu new];
 
     NSMenuItem *appItem = [mainMenu addItemWithTitle:@"CC Pets" action:nil keyEquivalent:@""];

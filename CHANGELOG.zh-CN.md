@@ -24,7 +24,7 @@
 - Antigravity CLI 会话通过 Hooks 和 MCP 互发消息，消息在下一次模型调用时读取。
 - Antigravity App 对话可通过需手动开启的 Sidecar 自动唤醒：`cc-pets bridge configure --agy-app=on`。
 - 新增 `--agy-allow`，设置 Antigravity CLI 中免确认的 Bridge 工具。
-- 新增可选的标签昵称（`--tab-title=on`，或右键「CC Bridge → 标签昵称」），在 CLI 终端标签标题末尾追加 Bridge 名称。
+- 新增可选的标签昵称（`--tab-title=on`，或「主菜单 → 桥接 → 桥接设置 → 标签昵称」），在 CLI 终端标签标题末尾追加 Bridge 名称。
 
 ### 启动保护
 
@@ -44,6 +44,12 @@
 - Codex 在 TUI 内 `/resume` 恢复的会话重新与终端配对（包括 TUI 启动较慢的情况），状态卡可以再次跳回终端。桌面端不参与配对。
 - 预发布版（如 `2.6.0-beta.3`）也能收到同号或更高的正式版更新。
 - 修复低额度提醒出队时崩溃的问题。
+
+## [2.6.0-beta.11] - 2026-11-29
+
+- 主菜单新增「桥接」页面，可查看消息动态、配置远程连接和调整桥接设置。
+- 在「远程连接」中配置 Slack，连接测试通过后保存，两个令牌分别存入 macOS 钥匙串。使用旧 beta 版 Slack 配置的用户需重新填写一次。
+- 重装时原位保留 Codex、Claude Code 和 agy 中等效的 hook，以及 MCP 服务的自定义配置。更新 Codex 配置时保留桌面端已有的工具授权，写入前校验完整 TOML。
 
 ## [2.5.0] - 2026-11-15
 

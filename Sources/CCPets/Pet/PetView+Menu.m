@@ -4,7 +4,6 @@
 #import "MenuHintView.h"
 #import "CCPetsPaths.h"
 #import "CCPetsImageLoader.h"
-#import "CCPetsBridge.h"
 #import "CCPetsGlassView.h"
 #import "MenuChoiceRow.h"
 #import "MenuPetSizeView.h"
@@ -331,7 +330,6 @@ static void PetJoinMenuWindowsToSpaces(NSWindow *parent) {
 }
 - (void)menuDidClose:(NSMenu *)menu {
     [MenuHint cancel];
-    // CC Bridge 子菜单也以 self 为代理（为了悬停说明），删除确认和预览只属于"管理桌宠"。
     if (menu != self.activePetSwitchMenu) return;
     [self resetPendingDeleteButton];
     [self.petMenuPreviewPanel orderOut:nil];
@@ -410,105 +408,6 @@ static void PetJoinMenuWindowsToSpaces(NSWindow *parent) {
     [menu addItem:item];
     return item;
 }
-// CC Bridge 开关组。状态每次打开菜单时现读（开关文件 / 选项），不在视图里缓存。
-// 除"消息角标 / 新消息通知"这两项只影响桌宠外，其余开关都通过 cc-pets bridge enable / configure
-// 落到 Claude Code / Codex 的配置里。
-- (void)addBridgeSwitchToMenu:(NSMenu *)menu title:(NSString *)title checked:(BOOL)checked
-    action:(SEL)action tag:(NSInteger)tag toolTip:(NSString *)toolTip {
-    // 与其他子菜单同宽。菜单宽度取最宽的一行：标题都控制在 5 个字以内，说明性文字放进悬停提示，
-    // 否则长文字行会把菜单撑宽，而自绘开关行是固定宽度，开关就不再贴右边。
-    // 说明不用系统 toolTip：它只在 App 激活时显示，见 MenuHintView.h。
-    NSMenuItem *item = [self addPersistentSwitchToMenu:menu title:title checked:checked
-        action:action width:PetSubmenuRowWidth tag:tag];
-    ((MenuHintRowView *)item.view).hint = toolTip;
-}
-// 一级子菜单放常用开关；免审批和只影响桌宠的提醒各收进二级菜单。
-// 未开启时只留"启用"一行：其余开关此时都不生效，列出来只是占地方。开启是异步的，
-// 菜单停留期间不会自己长出其余项，下次打开时按实际状态重建。
-- (void)addBridgeMenuToMenu:(NSMenu *)menu {
-    NSMenuItem *bridgeItem = [menu addItemWithTitle:@"CC Bridge" action:nil keyEquivalent:@""];
-    NSMenu *bridgeMenu = [NSMenu new];
-    // 免审批 / 桌宠提醒 是普通菜单项，悬停说明走 menu:willHighlightItem:。
-    bridgeMenu.delegate = self;
-    bridgeItem.submenu = bridgeMenu;
-    BOOL enabled = CCBridgeEnabled();
-    [self addBridgeSwitchToMenu:bridgeMenu title:L(@"Enable") checked:enabled
-        action:@selector(toggleBridgeEnabled:) tag:0
-        toolTip:L(@"Let local Agent sessions exchange messages, wake supported sessions, and reserve files")];
-    if (!enabled) return;
-
-    // 状态放在"启用"行的第二行，省掉底部单独的状态行和分隔线。开关上移与标题对齐，
-    // 状态文字才能占满整行宽度，不被开关截断。
-    NSDictionary *sessions = CCBridgeSessions();
-    NSUInteger reservations = CCBridgeActiveReservationCount([NSSet setWithArray:sessions.allKeys]);
-    MenuHintRowView *enableRow = (MenuHintRowView *)bridgeMenu.itemArray.lastObject.view;
-    enableRow.hint = [enableRow.hint stringByAppendingString:L(@"\nBelow: online sessions · active file reservations")];
-    const CGFloat statusHeight = 14;
-    [enableRow setFrameSize:NSMakeSize(NSWidth(enableRow.frame), NSHeight(enableRow.frame) + statusHeight)];
-    for (NSView *subview in enableRow.subviews) {
-        [subview setFrameOrigin:NSMakePoint(NSMinX(subview.frame), NSMinY(subview.frame) + statusHeight - 2)];
-    }
-    NSTextField *status = [NSTextField labelWithString:[NSString stringWithFormat:L(@"%lu sessions · %lu reserved"),
-        (unsigned long)sessions.count, (unsigned long)reservations]];
-    status.frame = NSMakeRect(12, 4, NSWidth(enableRow.frame) - 12 - PetMenuControlGap, statusHeight);
-    status.font = [NSFont menuFontOfSize:11];
-    status.textColor = NSColor.secondaryLabelColor;
-    status.lineBreakMode = NSLineBreakByTruncatingTail;
-    status.autoresizingMask = NSViewWidthSizable;
-    [enableRow addSubview:status];
-
-    [bridgeMenu addItem:NSMenuItem.separatorItem];
-    NSDictionary *options = CCBridgeOptions();
-    [self addBridgeSwitchToMenu:bridgeMenu title:L(@"Auto-wake") checked:[options[@"wake"] boolValue]
-        action:@selector(toggleBridgeWake:) tag:0
-        toolTip:L(@"Wake idle sessions automatically. When off, messages wait in the inbox until that session's next input, which saves tokens. Codex needs a session restart")];
-    [self addBridgeSwitchToMenu:bridgeMenu title:L(@"Edit guard") checked:[options[@"editGuard"] boolValue]
-        action:@selector(toggleBridgeEditGuard:) tag:0
-        toolTip:L(@"Pause once with an explanation when editing a file another session reserved; retrying goes through. Codex needs a session restart")];
-    [self addBridgeSwitchToMenu:bridgeMenu title:L(@"Tab nicknames") checked:[options[@"tabTitle"] boolValue]
-        action:@selector(toggleBridgeTabTitle:) tag:0
-        toolTip:L(@"Append CC Bridge nicknames to terminal tab titles. Restart CLI sessions after turning this on.")];
-
-    NSMenuItem *approvalItem = [bridgeMenu addItemWithTitle:L(@"Auto-approve") action:nil keyEquivalent:@""];
-    approvalItem.representedObject = L(@"Each group applies to the integrated Agents. Restart sessions to reload tool permissions");
-    NSMenu *approvalMenu = [NSMenu new];
-    NSArray<NSDictionary *> *groups = @[
-        @{@"title": L(@"Read"), @"group": @"view", @"tag": @1,
-          @"tip": L(@"Listing sessions, viewing reservations and reading the inbox. Read-only and safe")},
-        @{@"title": L(@"Send"), @"group": @"send", @"tag": @2,
-          @"tip": L(@"When on, Agents can message other sessions without asking")},
-        @{@"title": L(@"Reserve"), @"group": @"reserve", @"tag": @3,
-          @"tip": L(@"Reserving and releasing files")},
-        @{@"title": L(@"Rename"), @"group": @"name", @"tag": @4,
-          @"tip": L(@"Renaming the current session in CC Bridge")}
-    ];
-    NSSet *codex = [NSSet setWithArray:options[@"codexApprove"]];
-    NSSet *claude = [NSSet setWithArray:options[@"claudeAllow"]];
-    NSSet *agy = [NSSet setWithArray:options[@"antigravityAllow"]];
-    BOOL hasAntigravity = CCPetsProfilesForProvider(CCPetsProfileProviderAntigravity).count > 0;
-    for (NSDictionary *group in groups) {
-        NSSet *tools = [NSSet setWithArray:CCBridgeToolGroup(group[@"group"])];
-        BOOL checked = tools.count > 0 && [tools isSubsetOfSet:codex] && [tools isSubsetOfSet:claude] &&
-            (!hasAntigravity || [tools isSubsetOfSet:agy]);
-        [self addBridgeSwitchToMenu:approvalMenu title:group[@"title"] checked:checked
-            action:@selector(toggleBridgeApproval:) tag:[group[@"tag"] integerValue] toolTip:group[@"tip"]];
-    }
-    approvalItem.submenu = approvalMenu;
-
-    NSMenuItem *alertItem = [bridgeMenu addItemWithTitle:L(@"Pet alerts") action:nil keyEquivalent:@""];
-    alertItem.representedObject = L(@"Only affects the pet, not Claude Code / Codex settings");
-    NSMenu *alertMenu = [NSMenu new];
-    [self addBridgeSwitchToMenu:alertMenu title:L(@"Badge")
-        checked:[NSUserDefaults.standardUserDefaults boolForKey:BridgeBadgeEnabledKey]
-        action:@selector(toggleBridgeBadge:) tag:0
-        toolTip:L(@"Bottom-right of the status icon: blue for new deliveries, orange for a backed-up inbox")];
-    [self addBridgeSwitchToMenu:alertMenu title:L(@"Notify")
-        checked:[NSUserDefaults.standardUserDefaults boolForKey:BridgeNotificationKey]
-        action:@selector(toggleBridgeNotification:) tag:0
-        toolTip:L(@"Send a notification when a message is delivered between sessions (sender and recipient only, no content)")];
-    alertItem.submenu = alertMenu;
-}
-
 - (void)rightMouseDown:(NSEvent *)event {
     // 桌宠同时出现在多个 Space。用点击处的单独面板定位菜单，避免菜单跟随桌宠的原始桌面。
     NSPoint click = [self.window convertPointToScreen:event.locationInWindow];
@@ -621,8 +520,6 @@ static void PetJoinMenuWindowsToSpaces(NSWindow *parent) {
         row.enabled = dimApplies();
     }
     themeItem.submenu = themeMenu;
-    // 启用和免审批会改 Claude Code / Codex 的配置，主窗口还没有对应入口，先留在这里。
-    [self addBridgeMenuToMenu:menu];
     // 检查更新和关于收进「帮助」；有新版本时在顶层临时多一项「更新到 x.y.z…」，一步就能更新，
     // 不必展开子菜单。气泡和角标错过了，这里仍是醒目的入口。
     NSString *pendingVersion = self.pendingUpdateVersionRequested ? self.pendingUpdateVersionRequested() : nil;

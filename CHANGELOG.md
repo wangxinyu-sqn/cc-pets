@@ -25,7 +25,7 @@ truth for the version.
 - Antigravity CLI sessions exchange messages through hooks and MCP; messages are picked up on the next model invocation.
 - Antigravity App conversations can be woken through an opt-in Sidecar: `cc-pets bridge configure --agy-app=on`.
 - Add `--agy-allow` to skip approval for Bridge tools in Antigravity CLI.
-- Add opt-in tab nicknames (`--tab-title=on`, or right-click → CC Bridge → Tab nicknames) that append the Bridge name to CLI terminal tab titles.
+- Add opt-in tab nicknames (`--tab-title=on`, or Main menu → Bridge → Bridge Settings → Tab nicknames) that append the Bridge name to CLI terminal tab titles.
 
 ### Launch protection
 
@@ -45,6 +45,12 @@ truth for the version.
 - Pair Codex sessions resumed inside the TUI (`/resume`) with their terminal again, including when the TUI starts late, so the status card can focus it. Desktop clients are never paired.
 - Let prerelease builds such as `2.6.0-beta.3` receive the stable release of the same version or later.
 - Fix a crash when dequeuing low-quota alerts.
+
+## [2.6.0-beta.11] - 2026-11-29
+
+- Open **Bridge** in the main window to view message activity, configure remote connections and manage Bridge settings.
+- Configure Slack under **Remote Connections**. Both tokens are stored in the macOS keychain, and settings are saved after the connection test succeeds. Users of the earlier beta must re-enter their Slack settings once.
+- Reinstalling preserves equivalent Codex, Claude Code and Antigravity CLI hooks in place, along with custom MCP fields. Codex configuration updates preserve desktop tool approvals and validate the complete TOML before writing.
 
 ## [2.5.0] - 2026-11-15
 

@@ -7,6 +7,7 @@
 #import "CCPetsCLISupport.h"
 #import "CCPetsCleanup.h"
 #import "CCPetsIntegrations.h"
+#import "CCPetsHookMerge.h"
 #import "CCPetsJSON.h"
 #import "CCPetsPaths.h"
 #import "CCPetsPhrases.h"
@@ -247,12 +248,12 @@ static NSDictionary *InspectHooks(NSString *configFile, NSString *marker, NSStri
             }
         }
     }
-    NSString *current = [NSString stringWithFormat:@"'%@'", PetBinary()];
+    NSString *current = PetBinary();
     NSUInteger total = 0, stale = 0, legacy = 0, bridge = 0;
     for (id command in commands) {
         if (CCPetsIsManagedHookCommand(command, marker, @"cc-pets")) {
             total++;
-            if (![command containsString:current]) stale++;
+            if (![[CCPetsHookInvocation(command, nil) firstObject] isEqual:current]) stale++;
         }
         if (CCPetsIsManagedHookCommand(command, legacyMarker, @"codex-pet")) legacy++;
         if ([command isKindOfClass:NSString.class] && [command hasPrefix:CCBridgeHookMarker]) bridge++;

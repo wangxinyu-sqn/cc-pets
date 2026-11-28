@@ -2,6 +2,7 @@
 #import "CCPetsJSON.h"
 #import <mach-o/dyld.h>
 #import <sys/stat.h>
+#import <sys/file.h>
 #import <sys/wait.h>
 #import <fcntl.h>
 #import <poll.h>
@@ -217,7 +218,35 @@ id CCPetsReadConfig(NSString *path, NSString **errorMessage) {
     }
     id parsed = CCPetsJSONParse(data, errorMessage);
     if (!parsed) return nil;
-    return [parsed isKindOfClass:CCPetsJSONObject.class] ? parsed : NSNull.null;
+    if (![parsed isKindOfClass:CCPetsJSONObject.class]) return NSNull.null;
+    ((CCPetsJSONObject *)parsed).sourceData = data;
+    return parsed;
+}
+
+// Keep both users' original formatting and their latest edits. Serialize cooperating
+// Pet writers on the containing directory (rename replaces the file inode).
+BOOL CCPetsWriteChangedConfig(NSString *path, CCPetsJSONObject *document, mode_t mode, NSString **error) {
+    int dir = open(path.stringByDeletingLastPathComponent.fileSystemRepresentation, O_RDONLY | O_CLOEXEC);
+    if (dir < 0 || flock(dir, LOCK_EX) != 0) {
+        if (error) *error = [NSString stringWithFormat:@"%@: %s", path, strerror(errno)];
+        if (dir >= 0) close(dir);
+        return NO;
+    }
+    @try {
+        NSError *failure = nil;
+        NSData *current = [NSData dataWithContentsOfFile:path options:0 error:&failure];
+        if (!current && !([failure.domain isEqual:NSCocoaErrorDomain] && failure.code == NSFileReadNoSuchFileError)) {
+            if (error) *error = failure.localizedDescription;
+            return NO;
+        }
+        NSString *text = CCPetsJSONStringify(document);
+        if (current && [text isEqual:CCPetsJSONStringify(CCPetsJSONParse(current, NULL))]) return YES;
+        if (current != document.sourceData && ![current isEqual:document.sourceData]) {
+            if (error) *error = [NSString stringWithFormat:@"%@ changed during the update; retry", path];
+            return NO;
+        }
+        return CCPetsWriteFileAtomically(path, [text stringByAppendingString:@"\n"], mode, error);
+    } @finally { close(dir); }
 }
 
 #pragma mark - 子进程

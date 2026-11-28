@@ -49,7 +49,7 @@
         return weakSelf.updating ? nil : weakSelf.pendingUpdateVersion;
     };
     controller.showPendingUpdate = ^{ [weakSelf showPendingUpdate:nil]; };
-    // 右键和桌宠右键同一份菜单：启用 CC Bridge、免审批这些只在那里，仅菜单栏时不能没有入口。
+    // 右键和桌宠右键同一份菜单：仅菜单栏模式也能打开主窗口。
     controller.contextMenuProvider = ^NSMenu * { return [weakSelf.petView buildContextMenu]; };
     controller.contextMenuFinished = ^{ [weakSelf.petView finishContextMenu]; };
     self.statusItemController = controller;

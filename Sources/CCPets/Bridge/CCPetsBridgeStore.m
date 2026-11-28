@@ -107,8 +107,10 @@ void CCBridgeWriteCLILocator(void) {
     document[@"schemaVersion"] = @2;
     document[@"binary"] = CCPetsExecutablePath();
     document[@"path"] = CCPetsEnvironmentValue(@"PATH") ?: @"";
-    CCPetsWriteFileAtomically([CCBridgeHomeDirectory() stringByAppendingPathComponent:@"bridge-cli.json"],
-        [CCPetsJSONStringify(document) stringByAppendingString:@"\n"], 0600, NULL);
+    NSString *file = [CCBridgeHomeDirectory() stringByAppendingPathComponent:@"bridge-cli.json"];
+    NSString *text = [CCPetsJSONStringify(document) stringByAppendingString:@"\n"];
+    if (![text isEqual:[NSString stringWithContentsOfFile:file encoding:NSUTF8StringEncoding error:nil]])
+        CCPetsWriteFileAtomically(file, text, 0600, NULL);
 }
 
 static NSArray<NSString *> *AllTools(void) {

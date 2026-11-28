@@ -9,9 +9,10 @@
 // 窗口懒创建，关闭即释放，不常驻内存；页面也只在显示时创建。
 
 // 页面标识，也是 `cc-pets open <page>` 的参数。侧边栏分两组：
-// 工作台（概览、会话、用量、宠物、多账号）和通用（提醒、设置），诊断单独放在底部。
+// 工作台（概览、会话、CC Bridge、用量、宠物、多账号）和通用（提醒、设置），诊断单独放在底部。
 extern NSString *const CCPetsMainWindowPageOverview;
 extern NSString *const CCPetsMainWindowPageSessions;
+extern NSString *const CCPetsMainWindowPageBridge;
 extern NSString *const CCPetsMainWindowPageUsage;
 extern NSString *const CCPetsMainWindowPagePet;
 extern NSString *const CCPetsMainWindowPageAccounts;
@@ -46,6 +47,7 @@ NSString *CCPetsMainWindowAppearancePreference(void);
 @interface CCPetsMainWindowController : NSWindowController
 
 // 打开（已开着就前置）并切到指定页面；page 为 nil 或不认识时打开上次看的页面。
++ (void)presentBridgeSettings;
 + (void)presentPage:(NSString *)page;
 
 // 点 Dock 图标时调用：主窗口最小化在 Dock 里（或随 App 隐藏）就把它恢复到前台。
