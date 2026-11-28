@@ -17,20 +17,27 @@ NSDictionary *CCPetsNormalizedUsage(CCPetsProviderDescriptor *provider, NSDictio
     NSDictionary *tokens = Dictionary(rawUsage[@"tokenUsage"]);
     BOOL exhausted = [rawUsage[@"exhaustedAt"] isKindOfClass:NSNumber.class];
     BOOL hasWindowData = exhausted;
+    NSTimeInterval now = NSDate.date.timeIntervalSince1970;
     NSMutableArray *windows = [NSMutableArray array];
     for (NSDictionary *spec in provider.windowSpecs) {
         NSString *key = spec[@"key"];
         NSDictionary *quota = Dictionary(rawUsage[key]);
         NSDictionary *totals = Dictionary(tokens[key]);
         id used = quota[provider.usedKey];
+        if ([used isKindOfClass:NSNumber.class] || totals) hasWindowData = YES;
         NSMutableDictionary *window = [spec mutableCopy];
         window[@"quota"] = quota ?: @{};
+        if ([key isEqualToString:@"fiveHour"] || [key isEqualToString:@"week"]) {
+            NSNumber *reset = [quota[@"resets_at"] isKindOfClass:NSNumber.class] ? quota[@"resets_at"] : nil;
+            // Codex 的实时额度可能先于本地 Token 刷新，只展示同一周期的统计。
+            id countedReset = tokens[[key stringByAppendingString:@"ResetsAt"]];
+            if (!(reset.doubleValue > now) || (countedReset && ![countedReset isEqual:reset])) totals = nil;
+        }
         window[@"tokens"] = totals ?: @{};
         window[@"trend"] = @([spec[@"trend"] boolValue]);
         if ([used isKindOfClass:NSNumber.class]) {
             window[@"used"] = @(fmax(0, fmin(100, [used doubleValue])));
         }
-        if (window[@"used"] || totals) hasWindowData = YES;
         [windows addObject:[window copy]];
     }
     NSMutableDictionary *summary = [NSMutableDictionary dictionary];

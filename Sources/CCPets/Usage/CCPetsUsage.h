@@ -7,8 +7,8 @@ NSDictionary *ClaudeRateLimitsForConfigDirectory(NSString *configDirectory);
 NSDictionary *LatestClaudeUsage(void);
 NSDictionary *LatestUsage(void);
 NSDictionary *AntigravityRateLimitsForConfigDirectory(NSString *configDirectory);
-NSDictionary *AntigravityTokenUsageForConfigDirectory(NSString *configDirectory);
-NSDictionary *AntigravityAppTokenUsageForConfigDirectory(NSString *configDirectory);
+NSDictionary *AntigravityTokenUsageForConfigDirectory(NSString *configDirectory, NSDictionary *quota);
+NSDictionary *AntigravityAppTokenUsageForConfigDirectory(NSString *configDirectory, NSDictionary *quota);
 BOOL CCPetsAntigravityAppUsageAvailable(void);
 // 清掉 resets_at 已经翻篇（或不可能属于当前窗口）的额度窗口，缺 resets_at 的保留。
 NSDictionary *UsageByRemovingExpiredQuotaWindows(NSDictionary *usage);

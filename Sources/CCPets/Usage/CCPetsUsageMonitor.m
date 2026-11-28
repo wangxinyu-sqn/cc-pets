@@ -239,11 +239,17 @@ static void CodexEventsCallback(ConstFSEventStreamRef streamRef,
     BOOL defaultCLI = AntigravityHomeMatches(home, DefaultAntigravityConfigDirectory());
     BOOL includesApp = AntigravityHomeMatches(home, DefaultAntigravityAppConfigDirectory());
     __weak typeof(self) weakSelf = self;
+    NSDictionary *previous = self.antigravityProfileUsages[profileID];
     dispatch_async(self.antigravityQueue, ^{
         NSDictionary *quota = AntigravityRateLimitsForConfigDirectory(home);
-        NSDictionary *tokens = AntigravityTokenUsageForConfigDirectory(home);
+        NSDictionary *effectiveQuota = quota;
+        if (!quota && !CCPetsAntigravityUsesGeminiAPI(home) && [previous[@"sampledAt"] isKindOfClass:NSNumber.class] &&
+            NSDate.date.timeIntervalSince1970 - [previous[@"sampledAt"] doubleValue] < AntigravityQuotaUsageTTL) {
+            effectiveQuota = UsageByRemovingExpiredQuotaWindows(previous);
+        }
+        NSDictionary *tokens = AntigravityTokenUsageForConfigDirectory(home, effectiveQuota);
         NSDictionary *appTokens = includesApp && CCPetsAntigravityAppUsageAvailable()
-            ? AntigravityAppTokenUsageForConfigDirectory(home) : nil;
+            ? AntigravityAppTokenUsageForConfigDirectory(home, effectiveQuota) : nil;
         dispatch_async(destination, ^{
             typeof(self) strongSelf = weakSelf;
             if (!strongSelf || !strongSelf.started ||
@@ -251,14 +257,17 @@ static void CodexEventsCallback(ConstFSEventStreamRef streamRef,
             [strongSelf.antigravityPendingRequests removeObjectForKey:profileID];
             if (![strongSelf.profileReaderHomes[profileID] isEqualToString:home]) return;
 
-            NSDictionary *effectiveQuota = quota;
-            NSDictionary *previous = strongSelf.antigravityProfileUsages[profileID];
-            if (!quota && !CCPetsAntigravityUsesGeminiAPI(home) && [previous[@"sampledAt"] isKindOfClass:NSNumber.class] &&
-                NSDate.date.timeIntervalSince1970 - [previous[@"sampledAt"] doubleValue] < AntigravityQuotaUsageTTL) {
-                effectiveQuota = UsageByRemovingExpiredQuotaWindows(previous);
-            }
             NSMutableDictionary *snapshot = [effectiveQuota mutableCopy] ?: [NSMutableDictionary dictionary];
-            snapshot[@"tokenUsage"] = tokens;
+            // 订阅卡展示账号合计，上方的 CLI 和 App 汇总仍分别读取各自的来源。
+            NSMutableDictionary *accountTokens = [tokens mutableCopy] ?: [NSMutableDictionary dictionary];
+            for (NSString *key in @[@"fiveHour", @"week"]) {
+                NSNumber *cliTotal = tokens[key][@"total_tokens"];
+                NSNumber *appTotal = appTokens[key][@"total_tokens"];
+                if (cliTotal || appTotal) {
+                    accountTokens[key] = @{@"total_tokens": @(cliTotal.unsignedLongLongValue + appTotal.unsignedLongLongValue)};
+                }
+            }
+            snapshot[@"tokenUsage"] = accountTokens.count ? accountTokens : nil;
             snapshot[@"appTokenUsage"] = appTokens;
             NSDictionary *usage = snapshot.count > 0 ? [snapshot copy] : nil;
             strongSelf.antigravityProfileUsages[profileID] = usage;

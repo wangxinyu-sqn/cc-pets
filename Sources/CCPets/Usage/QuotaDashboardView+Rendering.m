@@ -241,8 +241,6 @@
                 withAttributes:[self textAttributesWithSize:12 color:secondary
                     weight:NSFontWeightRegular]];
         }
-        // 官方窗口拿不到时（账号没有这个窗口、或响应里没带），Token 走的是本机滚动窗口。
-        // 说清楚这一行的口径，比留一个 `--` 让人以为是渲染坏了要好。
         NSString *resetValue = [self resetText:window[@"quota"]
             showDate:[window[@"showDate"] boolValue]];
         NSString *reset = [resetValue isEqualToString:@"--"]
@@ -250,13 +248,10 @@
         [self drawText:reset inRect:NSMakeRect(x, NSMinY(card) + 46, 160, 18)
             size:11 weight:NSFontWeightRegular color:secondary dotColor:nil];
         // 两个主题统一使用紧凑文案；脚注里已说明 Token 即本机统计的已用量。
-        // Antigravity 额度是账号窗口，CLI 和 App 的本机 Token 用量分别显示在上方。
-        if (!antigravity) {
-            NSString *tokenText = [NSString stringWithFormat:L(@"Used %@"),
-                [self formattedTokenCount:window[@"tokens"]]];
-            [self drawText:tokenText inRect:NSMakeRect(x, NSMinY(card) + 22, 142, 22) size:14
-                weight:NSFontWeightSemibold color:color dotColor:color];
-        }
+        NSString *tokenText = [NSString stringWithFormat:L(@"Used %@"),
+            [self formattedTokenCount:window[@"tokens"]]];
+        [self drawText:tokenText inRect:NSMakeRect(x, NSMinY(card) + 22, 142, 22) size:14
+            weight:NSFontWeightSemibold color:color dotColor:color];
     }
 
     CGFloat trendX = NSMinX(card) + 574;

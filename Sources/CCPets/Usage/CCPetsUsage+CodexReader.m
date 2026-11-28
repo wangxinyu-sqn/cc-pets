@@ -71,7 +71,9 @@ static NSDictionary *UsageByAddingTokenTotals(NSDictionary *usage, NSURL *sessio
     NSMutableDictionary *result = [usage mutableCopy];
     result[@"tokenUsage"] = @{
         @"fiveHour": fiveTokens ?: NSNull.null,
+        @"fiveHourResetsAt": five[@"resets_at"] ?: NSNull.null,
         @"week": weekTokens ?: NSNull.null,
+        @"weekResetsAt": week[@"resets_at"] ?: NSNull.null,
         @"today": todayTokens ?: NSNull.null,
         @"recentWeek": recentTokens ?: NSNull.null,
         @"recentWeekStartsAt": @(rollingWeekStart),

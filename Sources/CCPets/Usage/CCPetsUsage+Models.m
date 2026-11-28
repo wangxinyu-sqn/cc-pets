@@ -184,7 +184,17 @@ static NSDictionary *AntigravityUsageByBaseModel(NSDictionary *models) {
     return grouped;
 }
 
-static NSDictionary *AntigravityTranscriptDays(NSURL *url) {
+static BOOL IsGeminiModel(NSString *model) {
+    return [model localizedCaseInsensitiveContainsString:@"gemini"];
+}
+
+// 整天沿用日归档。窗口起点落在一天中间时，用逐请求记录切分当天。
+typedef struct {
+    NSTimeInterval timestamp;
+    unsigned long long tokens;
+} GeminiTokenSample;
+
+static NSDictionary *AntigravityTranscriptDays(NSURL *url, NSMutableDictionary *geminiSamplesByDay) {
     NSFileHandle *handle = [NSFileHandle fileHandleForReadingFromURL:url error:nil];
     if (!handle) return nil;
     NSMutableDictionary<NSNumber *, NSDictionary *> *requests = [NSMutableDictionary dictionary];
@@ -225,6 +235,12 @@ static NSDictionary *AntigravityTranscriptDays(NSURL *url) {
     for (NSDictionary *request in requests.allValues) {
         NSString *day = DayLabel([calendar startOfDayForDate:request[@"date"]].timeIntervalSince1970);
         NSString *model = request[@"model"];
+        if (IsGeminiModel(model)) {
+            NSMutableData *samples = geminiSamplesByDay[day];
+            if (!samples) geminiSamplesByDay[day] = samples = [NSMutableData data];
+            GeminiTokenSample sample = {[request[@"date"] timeIntervalSince1970], CCPetsTotalTokens(request[@"counts"])};
+            [samples appendBytes:&sample length:sizeof(sample)];
+        }
         NSMutableDictionary *models = days[day] ?: (days[day] = [NSMutableDictionary dictionary]);
         NSMutableDictionary *counts = models[model] ?: (models[model] = [NSMutableDictionary dictionary]);
         AddModelCounts(counts, request[@"counts"]);
@@ -233,13 +249,19 @@ static NSDictionary *AntigravityTranscriptDays(NSURL *url) {
 }
 
 static NSDictionary *AntigravityModelDays(NSTimeInterval start, NSTimeInterval end,
-    NSMutableDictionary *cache, NSURL *brainURL) {
+    NSMutableDictionary *cache, NSURL *brainURL, NSDictionary *windowStarts, NSMutableDictionary *windowTokens) {
     NSFileManager *files = NSFileManager.defaultManager;
     NSArray<NSURL *> *sessions = [files contentsOfDirectoryAtURL:brainURL
         includingPropertiesForKeys:@[NSURLIsDirectoryKey, NSURLIsSymbolicLinkKey]
         options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
     NSString *first = DayLabel(start), *last = DayLabel(end);
     NSString *timeZone = NSTimeZone.localTimeZone.name;
+    NSMutableDictionary *partialDays = [NSMutableDictionary dictionary];
+    for (NSString *key in windowStarts) {
+        NSDate *boundary = [NSDate dateWithTimeIntervalSince1970:[windowStarts[key] doubleValue]];
+        NSDate *midnight = [NSCalendar.currentCalendar startOfDayForDate:boundary];
+        if (![boundary isEqualToDate:midnight]) partialDays[key] = DayLabel(midnight.timeIntervalSince1970);
+    }
     NSMutableSet<NSString *> *live = [NSMutableSet set];
     NSMutableDictionary<NSString *, NSMutableDictionary *> *days = [NSMutableDictionary dictionary];
     for (NSURL *session in sessions) {
@@ -253,12 +275,36 @@ static NSDictionary *AntigravityModelDays(NSTimeInterval start, NSTimeInterval e
             [live addObject:url.path];
             NSNumber *size = info[NSFileSize];
             NSDictionary *entry = cache[url.path];
-            NSDictionary *transcriptDays = entry[@"days"];
-            if (![entry[@"modified"] isEqual:modified] || ![entry[@"size"] isEqual:size] ||
-                ![entry[@"timeZone"] isEqual:timeZone] || ![transcriptDays isKindOfClass:NSDictionary.class]) {
-                transcriptDays = AntigravityTranscriptDays(url);
+            NSDictionary *transcriptDays = [entry[@"days"] isKindOfClass:NSDictionary.class] ? entry[@"days"] : nil;
+            NSDictionary *samplesByDay = entry[@"geminiSamplesByDay"];
+            // 旧缓存按天计数，仅当窗口需要切分这份转录时才补读时间戳。
+            BOOL needsSamples = NO;
+            if (!samplesByDay) {
+                for (NSString *day in partialDays.allValues) {
+                    if (transcriptDays[day]) {
+                        needsSamples = YES;
+                        break;
+                    }
+                }
+            }
+            if (needsSamples || ![entry[@"modified"] isEqual:modified] || ![entry[@"size"] isEqual:size] ||
+                ![entry[@"timeZone"] isEqual:timeZone] || !transcriptDays) {
+                NSMutableDictionary *samples = [NSMutableDictionary dictionary];
+                transcriptDays = AntigravityTranscriptDays(url, samples);
                 if (!transcriptDays) continue;
-                cache[url.path] = @{@"modified": modified, @"size": size, @"timeZone": timeZone, @"days": transcriptDays};
+                samplesByDay = samples;
+                cache[url.path] = @{@"modified": modified, @"size": size, @"timeZone": timeZone,
+                    @"days": transcriptDays, @"geminiSamplesByDay": samples};
+            }
+            for (NSString *key in partialDays) {
+                NSData *data = samplesByDay[partialDays[key]];
+                const GeminiTokenSample *samples = data.bytes;
+                NSTimeInterval cutoff = [windowStarts[key] doubleValue];
+                unsigned long long count = [windowTokens[key] unsignedLongLongValue];
+                for (NSUInteger i = 0; i < data.length / sizeof(GeminiTokenSample); i++) {
+                    if (samples[i].timestamp >= cutoff) count += samples[i].tokens;
+                }
+                windowTokens[key] = @(count);
             }
             for (NSString *day in transcriptDays) {
                 if ([day compare:first] == NSOrderedAscending || [day compare:last] != NSOrderedAscending) continue;
@@ -370,7 +416,7 @@ NSDictionary *CCPetsModelUsage(NSString *provider, NSTimeInterval start, NSTimeI
 }
 
 static NSDictionary *ModelUsageAtHome(NSString *provider, NSString *home,
-    NSTimeInterval start, NSTimeInterval end) {
+    NSTimeInterval start, NSTimeInterval end, NSDictionary *windowStarts) {
     BOOL isClaude = [provider isEqualToString:CCPetsProfileProviderClaude];
     BOOL isCodex = [provider isEqualToString:CCPetsProfileProviderCodex];
     NSString *antigravitySubdirectory = AntigravityBrainSubdirectory(provider);
@@ -389,10 +435,11 @@ static NSDictionary *ModelUsageAtHome(NSString *provider, NSString *home,
     BOOL archiveChanged = NO;
     NSMutableDictionary *archive = LoadModelArchive(archivePath, isClaude, &archiveChanged);
 
+    NSMutableDictionary *windowTokens = [NSMutableDictionary dictionary];
     NSDictionary<NSString *, NSDictionary *> *fresh;
     if (isClaude) fresh = ClaudeModelDays(start, end, cache, sourceURL);
     else if (isCodex) fresh = CodexModelDays(start, end, cache, sourceURL);
-    else fresh = AntigravityModelDays(start, end, cache, sourceURL);
+    else fresh = AntigravityModelDays(start, end, cache, sourceURL, windowStarts, windowTokens);
     NSDictionary *backgroundDays = isCodex ? CodexBackgroundModelDays(canonicalHome, start, end) : @{};
 
     NSMutableDictionary *archivedDays = [archive[@"days"] mutableCopy];
@@ -440,6 +487,11 @@ static NSDictionary *ModelUsageAtHome(NSString *provider, NSString *home,
         }
         [daily addObject:@{@"timestamp": dayStart, @"models": models}];
         for (NSString *model in models) {
+            for (NSString *key in windowStarts) {
+                if (dayStart.doubleValue >= [windowStarts[key] doubleValue] && IsGeminiModel(model)) {
+                    windowTokens[key] = @([windowTokens[key] unsignedLongLongValue] + CCPetsTotalTokens(models[model]));
+                }
+            }
             NSMutableDictionary *sum = totals[model];
             if (!sum) {
                 sum = [NSMutableDictionary dictionary];
@@ -461,27 +513,43 @@ static NSDictionary *ModelUsageAtHome(NSString *provider, NSString *home,
     archive[@"days"] = archivedDays;
     SaveTokenSummaryCache(cache, cachePath);
     if (archiveChanged) SaveTokenSummaryCache(archive, archivePath);
-    return @{@"models": totals, @"daily": daily};
+    NSMutableDictionary *result = [@{@"models": totals, @"daily": daily} mutableCopy];
+    for (NSString *key in windowStarts) {
+        result[key] = @{@"total_tokens": windowTokens[key] ?: @0};
+    }
+    return result;
 }
 
 NSDictionary *CCPetsModelUsageAtHome(NSString *provider, NSString *home, NSTimeInterval start, NSTimeInterval end) {
     if (AntigravityBrainSubdirectory(provider)) {
         // The usage monitor and the Usage page both read Antigravity's model cache.
         @synchronized (CCPetsProfileProviderAntigravity) {
-            return ModelUsageAtHome(provider, home, start, end);
+            return ModelUsageAtHome(provider, home, start, end, nil);
         }
     }
-    return ModelUsageAtHome(provider, home, start, end);
+    return ModelUsageAtHome(provider, home, start, end, nil);
 }
 
-static NSDictionary *AntigravityTokenUsage(NSString *provider, NSString *configDirectory) {
+static NSDictionary *AntigravityTokenUsage(NSString *provider, NSString *configDirectory, NSDictionary *quota) {
     NSCalendar *calendar = NSCalendar.currentCalendar;
     NSDate *today = [calendar startOfDayForDate:NSDate.date];
     NSDate *end = [calendar dateByAddingUnit:NSCalendarUnitDay value:1 toDate:today options:0];
     NSDate *start = [calendar dateByAddingUnit:NSCalendarUnitDay value:-90 toDate:end options:0];
     NSDate *weekStart = [calendar dateByAddingUnit:NSCalendarUnitDay value:-6 toDate:today options:0];
-    NSDictionary *history = CCPetsModelUsageAtHome(provider, configDirectory,
-        start.timeIntervalSince1970, end.timeIntervalSince1970);
+    NSDictionary *durations = @{@"fiveHour": @(FiveHourWindowMinutes), @"week": @(SevenDayWindowMinutes)};
+    NSMutableDictionary *windowStarts = [NSMutableDictionary dictionary];
+    NSTimeInterval now = NSDate.date.timeIntervalSince1970;
+    for (NSString *key in durations) {
+        NSDictionary *window = [quota[key] isKindOfClass:NSDictionary.class] ? quota[key] : nil;
+        double minutes = [durations[key] doubleValue];
+        if (QuotaWindowLooksCurrent(window, minutes, now)) {
+            windowStarts[key] = @([window[@"resets_at"] doubleValue] - minutes * 60);
+        }
+    }
+    NSDictionary *history;
+    @synchronized (CCPetsProfileProviderAntigravity) {
+        history = ModelUsageAtHome(provider, configDirectory, start.timeIntervalSince1970, end.timeIntervalSince1970, windowStarts);
+    }
     if (![history[@"models"] count]) return nil;
     NSDictionary *windows = CalendarMonthWindows(end.timeIntervalSince1970);
     NSMutableArray<NSDictionary *> *series = [NSMutableArray array];
@@ -496,20 +564,22 @@ static NSDictionary *AntigravityTokenUsage(NSString *provider, NSString *configD
         [series addObject:tokens];
         if ([day[@"timestamp"] doubleValue] >= [windows[@"monthStart"] doubleValue]) [month addObject:tokens];
     }
-    return @{@"today": SummedDailyTokenSeriesInRange(series, today.timeIntervalSince1970, end.timeIntervalSince1970),
+    NSMutableDictionary *usage = [@{@"today": SummedDailyTokenSeriesInRange(series, today.timeIntervalSince1970, end.timeIntervalSince1970),
         @"recentWeek": SummedDailyTokenSeriesInRange(series, weekStart.timeIntervalSince1970, end.timeIntervalSince1970),
         @"recentWeekStartsAt": @(weekStart.timeIntervalSince1970), @"month": SummedDailyTokenSeries(month),
         @"monthComparable": SummedDailyTokenSeriesInRange(month, [windows[@"monthStart"] doubleValue],
             [windows[@"monthComparableEnd"] doubleValue]),
         @"previousMonthToDate": SummedDailyTokenSeriesInRange(series, [windows[@"previousMonthStart"] doubleValue],
             [windows[@"previousMonthEnd"] doubleValue]), @"monthDaily": month,
-        @"monthComparableEndsAt": windows[@"monthComparableEnd"]};
+        @"monthComparableEndsAt": windows[@"monthComparableEnd"]} mutableCopy];
+    for (NSString *key in windowStarts) usage[key] = history[key];
+    return usage;
 }
 
-NSDictionary *AntigravityTokenUsageForConfigDirectory(NSString *configDirectory) {
-    return AntigravityTokenUsage(CCPetsProfileProviderAntigravity, configDirectory);
+NSDictionary *AntigravityTokenUsageForConfigDirectory(NSString *configDirectory, NSDictionary *quota) {
+    return AntigravityTokenUsage(CCPetsProfileProviderAntigravity, configDirectory, quota);
 }
 
-NSDictionary *AntigravityAppTokenUsageForConfigDirectory(NSString *configDirectory) {
-    return AntigravityTokenUsage(@"antigravity-app", configDirectory);
+NSDictionary *AntigravityAppTokenUsageForConfigDirectory(NSString *configDirectory, NSDictionary *quota) {
+    return AntigravityTokenUsage(@"antigravity-app", configDirectory, quota);
 }
